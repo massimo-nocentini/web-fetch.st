@@ -171,16 +171,17 @@ WebFetchBodyStream >> upToEnd [
 
 { #category : 'private' }
 WebFetchBodyStream >> waitAndReadInto: aByteArray startingAt: startIndex count: count [
+	| ready |
+	ready := [
+		call refreshState >= 3
+			or: [ call recordedAvailableBytes > 0
+			or: [ call recordedState = 0 ] ] ].
 	[
 		| s |
-		[
-			call
-				waitUntil: [
-					call refreshState >= 3
-						or: [ call recordedAvailableBytes > 0
-						or: [ call recordedState = 0 ] ] ]
-				timeout: nil ]
-			ifCurtailed: [ call abort ].
+		ready value ifFalse: [
+			"refused in a callback, the call is not aborted"
+			call checkMayWait.
+			[ call waitUntil: ready timeout: nil ] ifCurtailed: [ call abort ] ].
 		s := call recordedState.
 		(s = 4 or: [ s = 0 ]) ifTrue: [ call signalErrorOfEnded ].
 		call recordedAvailableBytes > 0 ifTrue: [

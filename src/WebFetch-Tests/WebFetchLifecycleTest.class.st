@@ -161,6 +161,26 @@ WebFetchLifecycleTest >> testCallbackLeavesOtherProcessesAlone [
 ]
 
 { #category : 'tests' }
+WebFetchLifecycleTest >> testCallbackReadsStream [
+	"What is here can be read; the wait for more is refused, and the call goes on"
+
+	| call stream |
+	host enqueuePending.
+	call := (WebFetch request: 'http://example.test/cbs') startWithWindow: 100.
+	host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://example.test/cbs' type: 'basic' redirected: false headers: #( ).
+	host pushBytes: 'abc' utf8Encoded for: host lastId.
+	stream := WebFetchBodyStream on: call response: call waitForHead.
+	[
+		self inCallback: [
+			self assert: (stream next: 3) equals: 'abc' utf8Encoded.
+			self should: [ stream next ] raise: WebFetchInCallback ].
+		self assert: host openCount equals: 1.
+		host pushBytes: 'd' utf8Encoded for: host lastId.
+		host finish: host lastId.
+		self assert: stream upToEnd equals: 'd' utf8Encoded ] ensure: [ call abort ]
+]
+
+{ #category : 'tests' }
 WebFetchLifecycleTest >> testCallbackWhenDone [
 	"In a callback that lets its process run, and in one that does not"
 
