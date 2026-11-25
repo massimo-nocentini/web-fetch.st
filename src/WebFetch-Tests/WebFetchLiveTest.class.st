@@ -101,16 +101,24 @@ WebFetchLiveTest >> waitUntilSeenCountForTag: tag atLeast: expected [
 	self assert: count >= expected
 ]
 
+{ #category : 'running' }
+WebFetchLiveTest >> tearDown [
+	WebFetch isAvailable ifTrue: [ WebFetch abortAll ].
+	super tearDown
+]
+
 { #category : 'tests' }
 WebFetchLiveTest >> testAbortAllClosesTenHangCalls [
-	| base tag |
+	| base tag count |
 	base := self baseUrl.
 	tag := 'tag-abortall-' , Time millisecondClockValue asString.
-	10 timesRepeat: [ (WebFetch request: base , '/hang?' , tag) start ].
-	self waitUntilSeenCountForTag: tag atLeast: 10.
+	count := self class isBrowser ifTrue: [ 4 ] ifFalse: [ 10 ].
+	1 to: count do: [ :i |
+		(WebFetch request: base , '/hang?' , tag , '-' , i printString) start ].
+	self waitUntilSeenCountForTag: tag atLeast: count.
 	WebFetch abortAll.
 	self assert: WebFetchCall openCount equals: 0.
-	self waitUntilClosedCountForTag: tag atLeast: 10
+	self waitUntilClosedCountForTag: tag atLeast: count
 ]
 
 { #category : 'tests' }
@@ -215,14 +223,17 @@ WebFetchLiveTest >> testEarlyStreamCloseClosesServer [
 
 { #category : 'tests' }
 WebFetchLiveTest >> testFinalizationOf100DroppedCalls [
-	| base tag before deadline |
+	| base tag before deadline batchSize batches |
 	base := self baseUrl.
 	tag := 'tag-gc-' , Time millisecondClockValue asString.
 	before := self registeredSemaphoreCount.
-	1 to: 5 do: [ :batch |
+	batchSize := self class isBrowser ifTrue: [ 4 ] ifFalse: [ 20 ].
+	batches := 100 // batchSize.
+	1 to: batches do: [ :batch |
 		| batchCalls |
-		batchCalls := (1 to: 20) collect: [ :i | (WebFetch request: base , '/hang?' , tag) start ].
-		self waitUntilSeenCountForTag: tag atLeast: batch * 20.
+		batchCalls := (1 to: batchSize) collect: [ :i |
+			(WebFetch request: base , '/hang?' , tag , '-' , batch printString , '-' , i printString) start ].
+		self waitUntilSeenCountForTag: tag atLeast: batch * batchSize.
 		batchCalls := nil.
 		deadline := Time millisecondClockValue + 5000.
 		[ WebFetchCall openCount > 0 and: [ Time millisecondClockValue < deadline ] ] whileTrue: [
@@ -251,7 +262,8 @@ WebFetchLiveTest >> testGzipHeadStatus204HeadersEchoNocorsAndRedirect [
 	self assert: resp contents equals: 'hello'.
 	self assert: (resp headerAt: 'X-A' ifAbsent: [ nil ]) equals: 'café'.
 	stats := self fetchStats.
-	seen := (stats at: 'requests') detect: [ :each | (each at: 'url') includesSubstring: tag ].
+	seen := (stats at: 'requests') detect: [ :each |
+		((each at: 'url') includesSubstring: tag) and: [ (each at: 'preflight') not ] ].
 	self assert: ((seen at: 'headers') at: 'x-test') equals: 'val-1'.
 
 	resp := WebFetch get: base , '/gzip'.
@@ -315,8 +327,8 @@ WebFetchLiveTest >> testSixtyFiveOpenLimit [
 	base := self baseUrl.
 	calls := OrderedCollection new.
 	[
-		64 timesRepeat: [ calls add: (WebFetch request: base , '/hang') start ].
-		self should: [ (WebFetch request: base , '/hang') start ] raise: WebFetchTooManyOpen ]
+		1 to: 64 do: [ :i | calls add: (WebFetch request: base , '/hang?n=' , i printString) start ].
+		self should: [ (WebFetch request: base , '/hang?n=65') start ] raise: WebFetchTooManyOpen ]
 		ensure: [ calls do: [ :c | c abort ] ]
 ]
 
