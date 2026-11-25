@@ -64,7 +64,7 @@ WebFetchBodyStream >> do: aBlock [
 
 { #category : 'private' }
 WebFetchBodyStream >> fillBuffer [
-	"Ensure at least one buffered byte; answer false at EOF, signal on failure or early close"
+	"Ensure at least one buffered byte. Answer false at EOF or signal on failure or early close."
 
 	| n |
 	position <= limit ifTrue: [ ^ true ].
@@ -90,7 +90,7 @@ WebFetchBodyStream >> isStream [
 
 { #category : 'reading' }
 WebFetchBodyStream >> next [
-	"Answer the next byte (0..255), or nil at EOF"
+	"Answer the next byte (0..255), or nil at EOF."
 
 	| byte |
 	self fillBuffer ifFalse: [ ^ nil ].
@@ -101,7 +101,7 @@ WebFetchBodyStream >> next [
 
 { #category : 'reading' }
 WebFetchBodyStream >> next: anInteger [
-	"Answer a ByteArray of up to anInteger bytes"
+	"Answer a ByteArray of up to anInteger bytes."
 
 	| result offset |
 	anInteger <= 0 ifTrue: [ ^ #[ ] ].
@@ -117,7 +117,7 @@ WebFetchBodyStream >> next: anInteger [
 
 { #category : 'reading' }
 WebFetchBodyStream >> peek [
-	"Answer the next byte without consuming it, or nil at EOF"
+	"Answer the next byte without consuming it, or nil at EOF."
 
 	self fillBuffer ifFalse: [ ^ nil ].
 	^ buffer at: position
@@ -125,7 +125,7 @@ WebFetchBodyStream >> peek [
 
 { #category : 'reading' }
 WebFetchBodyStream >> readInto: aByteArray startingAt: startIndex count: count [
-	"Wait for at least one byte and copy up to count bytes into aByteArray; answer 0 at EOF"
+	"Wait for at least one byte and copy up to count bytes into aByteArray. Answer 0 at EOF."
 
 	count <= 0 ifTrue: [ ^ 0 ].
 	position <= limit ifTrue: [
@@ -150,7 +150,7 @@ WebFetchBodyStream >> response [
 
 { #category : 'reading' }
 WebFetchBodyStream >> upToEnd [
-	"Read all remaining bytes directly into a growing ByteArray"
+	"Read all remaining bytes directly into a growing ByteArray."
 
 	| result size initial |
 	initial := ((call isClosed ifTrue: [ 0 ] ifFalse: [ call availableBytes ]) max: 16384)
@@ -173,14 +173,17 @@ WebFetchBodyStream >> upToEnd [
 WebFetchBodyStream >> waitAndReadInto: aByteArray startingAt: startIndex count: count [
 	[
 		| s |
-		[ call waitUntil: [ call availableBytes > 0 or: [ call state >= 3 or: [ call state = 0 ] ] ] timeout: nil ]
+		[
+			call
+				waitUntil: [
+					call refreshState >= 3
+						or: [ call recordedAvailableBytes > 0
+						or: [ call recordedState = 0 ] ] ]
+				timeout: nil ]
 			ifCurtailed: [ call abort ].
-		s := call state.
-		s = 4 ifTrue: [ call error copy signal ].
-		s = 0 ifTrue: [
-			call error ifNotNil: [ :e | e copy signal ].
-			WebFetchAborted signal: 'WebFetch stream was closed' ].
-		call availableBytes > 0 ifTrue: [
+		s := call recordedState.
+		(s = 4 or: [ s = 0 ]) ifTrue: [ call signalErrorOfEnded ].
+		call recordedAvailableBytes > 0 ifTrue: [
 			| n |
 			n := call readInto: aByteArray startingAt: startIndex count: count.
 			n > 0 ifTrue: [ ^ n ] ].

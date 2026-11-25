@@ -20,7 +20,8 @@ Class {
 		'scriptQueue',
 		'requestHandler',
 		'readHook',
-		'stateHook'
+		'stateHook',
+		'startHook'
 	],
 	#category : 'WebFetch-Tests-Host',
 	#package : 'WebFetch-Tests',
@@ -310,6 +311,13 @@ WebFetchTestHost >> onRequest: aBlock [
 ]
 
 { #category : 'scripting' }
+WebFetchTestHost >> onStart: aBlock [
+	"Optional hook evaluated during startSemaphore:... outside mutex before allocating the handle"
+
+	mutex critical: [ startHook := aBlock ]
+]
+
+{ #category : 'scripting' }
 WebFetchTestHost >> onState: aBlock [
 	"Optional hook evaluated during stateOf: outside mutex (for concurrent-close tests)"
 
@@ -455,7 +463,8 @@ WebFetchTestHost >> reset [
 		scriptQueue := OrderedCollection new.
 		requestHandler := nil.
 		readHook := nil.
-		stateHook := nil ]
+		stateHook := nil.
+		startHook := nil ]
 ]
 
 { #category : 'private' }
@@ -470,7 +479,9 @@ WebFetchTestHost >> signalSemaphoreIndex: semIndex [
 
 { #category : 'host protocol' }
 WebFetchTestHost >> startSemaphore: semIndex head: headBytes body: bodyBytesOrNil window: windowBytes timeout: timeoutMs flags: flags [
-	| table parsed reqRecord id entry script handler |
+	| table parsed reqRecord id entry script handler hook |
+	hook := mutex critical: [ startHook ].
+	hook ifNotNil: [ hook value ].
 	availability = 0 ifTrue: [ WebFetchUnavailable signal: 'WebFetch is not available' ].
 	availability = 2 ifTrue: [ WebFetchNetworkOff signal: 'Network access is off' ].
 	table := Smalltalk specialObjectsArray at: 39.

@@ -5,6 +5,7 @@ Class {
 	#name : 'WebFetchLiveTest',
 	#superclass : 'TestCase',
 	#classVars : [
+		'IsBrowser',
 		'Server'
 	],
 	#category : 'WebFetch-Tests-Live',
@@ -13,8 +14,25 @@ Class {
 }
 
 { #category : 'accessing' }
+WebFetchLiveTest class >> defaultTimeLimit [
+	^ 60 seconds
+]
+
+{ #category : 'accessing' }
+WebFetchLiveTest class >> isBrowser [
+	"True when running inside a browser worker rather than Node."
+
+	^ IsBrowser ifNil: [ false ]
+]
+
+{ #category : 'accessing' }
+WebFetchLiveTest class >> isBrowser: aBoolean [
+	IsBrowser := aBoolean
+]
+
+{ #category : 'accessing' }
 WebFetchLiveTest class >> server [
-	"Base URL of the live test server (e.g. http://127.0.0.1:12345), or nil"
+	"Base URL of the live test server (e.g. http://127.0.0.1:12345), or nil."
 
 	Server ifNotNil: [ ^ Server ].
 	^ OSEnvironment current at: 'WEB_FETCH_SERVER' ifAbsent: [ nil ]
@@ -32,40 +50,78 @@ WebFetchLiveTest >> baseUrl [
 ]
 
 { #category : 'helpers' }
-WebFetchLiveTest >> closedCountFromServer [
-	| resp text idx rest |
-	resp := WebFetch get: self baseUrl , '/_stats'.
-	text := resp contents.
-	idx := text findString: '"closed":'.
-	idx = 0 ifTrue: [ ^ 0 ].
-	rest := text copyFrom: idx + 9 to: text size.
-	^ rest asInteger ifNil: [ 0 ]
+WebFetchLiveTest >> closedCountForTag: tag [
+	| stats |
+	stats := self fetchStats.
+	^ ((stats at: 'requests') select: [ :each |
+		((each at: 'url') includesSubstring: tag) and: [ each at: 'closed' ] ]) size
 ]
 
 { #category : 'helpers' }
-WebFetchLiveTest >> resetServer [
-	(WebFetch request: self baseUrl , '/_reset') method: #POST; fetch
+WebFetchLiveTest >> fetchStats [
+	| resp |
+	resp := WebFetch get: self baseUrl , '/_stats'.
+	^ STONJSON fromString: resp contents
+]
+
+{ #category : 'helpers' }
+WebFetchLiveTest >> registeredSemaphoreCount [
+	| table count |
+	table := Smalltalk specialObjectsArray at: 39.
+	count := 0.
+	table do: [ :each | each ifNotNil: [ count := count + 1 ] ].
+	^ count
+]
+
+{ #category : 'helpers' }
+WebFetchLiveTest >> verifyPatternBytes: bytes [
+	1 to: bytes size do: [ :i |
+		(bytes at: i) = ((i - 1) bitAnd: 255) ifFalse: [
+			self fail: 'Pattern mismatch at index ' , i asString ] ]
+]
+
+{ #category : 'helpers' }
+WebFetchLiveTest >> waitUntilClosedCountForTag: tag atLeast: expected [
+	| deadline |
+	deadline := Time millisecondClockValue + 3000.
+	[ (self closedCountForTag: tag) < expected and: [ Time millisecondClockValue < deadline ] ]
+		whileTrue: [ (Delay forMilliseconds: 30) wait ].
+	self assert: (self closedCountForTag: tag) >= expected
+]
+
+{ #category : 'helpers' }
+WebFetchLiveTest >> waitUntilSeenCountForTag: tag atLeast: expected [
+	| deadline count |
+	deadline := Time millisecondClockValue + 3000.
+	[
+		count := ((self fetchStats at: 'requests') select: [ :each |
+			(each at: 'url') includesSubstring: tag ]) size.
+		count < expected and: [ Time millisecondClockValue < deadline ] ]
+		whileTrue: [ (Delay forMilliseconds: 30) wait ].
+	self assert: count >= expected
 ]
 
 { #category : 'tests' }
-WebFetchLiveTest >> testAbortTerminateAndDroppedStreamCloseServer [
-	| base before call proc |
+WebFetchLiveTest >> testAbortAllClosesTenHangCalls [
+	| base tag |
 	base := self baseUrl.
-	self resetServer.
-	before := self closedCountFromServer.
+	tag := 'tag-abortall-' , Time millisecondClockValue asString.
+	10 timesRepeat: [ (WebFetch request: base , '/hang?' , tag) start ].
+	self waitUntilSeenCountForTag: tag atLeast: 10.
+	WebFetch abortAll.
+	self assert: WebFetchCall openCount equals: 0.
+	self waitUntilClosedCountForTag: tag atLeast: 10
+]
 
-	call := (WebFetch request: base , '/hang') start.
-	(Delay forMilliseconds: 80) wait.
+{ #category : 'tests' }
+WebFetchLiveTest >> testAbortClosesServer [
+	| base tag call |
+	base := self baseUrl.
+	tag := 'tag-abort-' , Time millisecondClockValue asString.
+	call := (WebFetch request: base , '/hang?' , tag) start.
+	self waitUntilSeenCountForTag: tag atLeast: 1.
 	call abort.
-
-	proc := [ (WebFetch request: base , '/hang') timeout: 30 seconds; fetch ] fork.
-	(Delay forMilliseconds: 80) wait.
-	proc terminate.
-
-	(WebFetch request: base , '/endless') stream: [ :s | s next: 10 ].
-
-	(Delay forMilliseconds: 150) wait.
-	self assert: self closedCountFromServer >= (before + 3)
+	self waitUntilClosedCountForTag: tag atLeast: 1
 ]
 
 { #category : 'tests' }
@@ -79,8 +135,8 @@ WebFetchLiveTest >> testBadRequestsAndConnectionRefused [
 ]
 
 { #category : 'tests' }
-WebFetchLiveTest >> testBodySizesZeroOneExactPlusOneAndFiveMB [
-	| base resp |
+WebFetchLiveTest >> testBodySizesZeroOneExactPlusOneFiveMBAndStream3MB [
+	| base resp pieces total |
 	base := self baseUrl.
 	resp := (WebFetch request: base , '/n?n=0') maximumBodySize: 0; fetch.
 	self assert: resp rawContents size equals: 0.
@@ -90,13 +146,23 @@ WebFetchLiveTest >> testBodySizesZeroOneExactPlusOneAndFiveMB [
 
 	resp := (WebFetch request: base , '/n?n=4096') maximumBodySize: 4096; fetch.
 	self assert: resp rawContents size equals: 4096.
+	self verifyPatternBytes: resp rawContents.
 
 	self
 		should: [ (WebFetch request: base , '/n?n=4097') maximumBodySize: 4096; fetch ]
 		raise: WebFetchTooLarge.
 
 	resp := (WebFetch request: base , '/n?n=5242880') fetch.
-	self assert: resp rawContents size equals: 5242880
+	self assert: resp rawContents size equals: 5242880.
+	self verifyPatternBytes: resp rawContents.
+
+	pieces := ByteArray streamContents: [ :out |
+		(WebFetch request: base , '/n?n=3145728') stream: [ :s |
+			| chunk |
+			[ (chunk := s next: 7000) notEmpty ] whileTrue: [ out nextPutAll: chunk ] ] ].
+	total := pieces size.
+	self assert: total equals: 3145728.
+	self verifyPatternBytes: pieces
 ]
 
 { #category : 'tests' }
@@ -116,27 +182,77 @@ WebFetchLiveTest >> testConcurrent30 [
 ]
 
 { #category : 'tests' }
-WebFetchLiveTest >> testFinalizationOf100DroppedCalls [
-	| base deadline |
+WebFetchLiveTest >> testDribbleStreamAndWaitTimeout [
+	| base reads text call tag |
 	base := self baseUrl.
-	5 timesRepeat: [
-		20 timesRepeat: [
-			| c |
-			c := (WebFetch request: base , '/hello') start.
-			c := nil ].
-		Smalltalk garbageCollect.
-		(Delay forMilliseconds: 30) wait ].
-	deadline := Time millisecondClockValue + 8000.
-	[ WebFetchCall openCount > 0 and: [ Time millisecondClockValue < deadline ] ] whileTrue: [
-		Smalltalk garbageCollect.
-		(Delay forMilliseconds: 50) wait ].
-	self assert: WebFetchCall openCount equals: 0
+	reads := 0.
+	text := ByteArray streamContents: [ :out |
+		(WebFetch request: base , '/dribble') stream: [ :s |
+			| buf n |
+			buf := ByteArray new: 64.
+			[ (n := s readInto: buf startingAt: 1 count: buf size) > 0 ] whileTrue: [
+				reads := reads + 1.
+				out next: n putAll: buf startingAt: 1 ] ] ].
+	self assert: text utf8Decoded equals: 'tick0tick1tick2tick3tick4'.
+	self assert: reads > 1.
+
+	tag := 'tag-wt-' , Time millisecondClockValue asString.
+	call := (WebFetch request: base , '/hang?' , tag) start.
+	self waitUntilSeenCountForTag: tag atLeast: 1.
+	self deny: (call waitTimeout: 50 milliSeconds).
+	call abort.
+	self waitUntilClosedCountForTag: tag atLeast: 1
 ]
 
 { #category : 'tests' }
-WebFetchLiveTest >> testGzipHeadPostAndRedirect [
-	| base resp |
+WebFetchLiveTest >> testEarlyStreamCloseClosesServer [
+	| base tag |
 	base := self baseUrl.
+	tag := 'tag-stream-' , Time millisecondClockValue asString.
+	(WebFetch request: base , '/endless?' , tag) stream: [ :s | s next: 10 ].
+	self waitUntilClosedCountForTag: tag atLeast: 1
+]
+
+{ #category : 'tests' }
+WebFetchLiveTest >> testFinalizationOf100DroppedCalls [
+	| base tag before deadline |
+	base := self baseUrl.
+	tag := 'tag-gc-' , Time millisecondClockValue asString.
+	before := self registeredSemaphoreCount.
+	1 to: 5 do: [ :batch |
+		| batchCalls |
+		batchCalls := (1 to: 20) collect: [ :i | (WebFetch request: base , '/hang?' , tag) start ].
+		self waitUntilSeenCountForTag: tag atLeast: batch * 20.
+		batchCalls := nil.
+		deadline := Time millisecondClockValue + 5000.
+		[ WebFetchCall openCount > 0 and: [ Time millisecondClockValue < deadline ] ] whileTrue: [
+			Smalltalk garbageCollect.
+			(Delay forMilliseconds: 30) wait ] ].
+	deadline := Time millisecondClockValue + 8000.
+	[ (WebFetchCall openCount > 0 or: [ self registeredSemaphoreCount > before ])
+		and: [ Time millisecondClockValue < deadline ] ] whileTrue: [
+			Smalltalk garbageCollect.
+			(Delay forMilliseconds: 50) wait ].
+	self assert: WebFetchCall openCount equals: 0.
+	self assert: self registeredSemaphoreCount equals: before.
+	self waitUntilClosedCountForTag: tag atLeast: 100
+]
+
+{ #category : 'tests' }
+WebFetchLiveTest >> testGzipHeadStatus204HeadersEchoNocorsAndRedirect [
+	| base tag resp stats seen err |
+	base := self baseUrl.
+
+	tag := 'tag-hdr-' , Time millisecondClockValue asString.
+	resp := (WebFetch request: base , '/hello?' , tag)
+		headerAt: 'X-Test' put: 'val-1';
+		fetch.
+	self assert: resp status equals: 200.
+	self assert: resp contents equals: 'hello'.
+	self assert: (resp headerAt: 'X-A' ifAbsent: [ nil ]) equals: 'café'.
+	stats := self fetchStats.
+	seen := (stats at: 'requests') detect: [ :each | (each at: 'url') includesSubstring: tag ].
+	self assert: ((seen at: 'headers') at: 'x-test') equals: 'val-1'.
 
 	resp := WebFetch get: base , '/gzip'.
 	self assert: resp status equals: 200.
@@ -146,20 +262,51 @@ WebFetchLiveTest >> testGzipHeadPostAndRedirect [
 	self assert: resp status equals: 200.
 	self assert: resp rawContents isEmpty.
 
-	resp := WebFetch post: base , '/echo' body: 'hello world' type: 'text/plain'.
-	self assert: (resp contents beginsWith: 'POST|/echo|text/plain|').
-	self assert: (resp contents endsWith: '|11|hello world').
+	resp := WebFetch get: base , '/204'.
+	self assert: resp status equals: 204.
+	self assert: resp rawContents isEmpty.
+
+	resp := WebFetch get: base , '/status?code=404'.
+	self assert: resp status equals: 404.
+	self deny: resp isSuccess.
+	self assert: resp contents equals: '404'.
+
+	resp := WebFetch post: base , '/echo' body: 'héllo café' type: 'text/plain; charset=utf-8'.
+	self assert: (resp contents endsWith: '|12|héllo café').
 
 	resp := WebFetch post: base , '/echo' body: #[ 65 66 67 ] type: 'application/octet-stream'.
 	self assert: (resp contents endsWith: '|3|ABC').
 
+	self class isBrowser ifFalse: [
+		resp := (WebFetch request: base , '/echo')
+			headerAt: 'User-Agent' put: 'WebFetchTest/1';
+			fetch.
+		self assert: (resp contents includesSubstring: '|WebFetchTest/1|') ].
+
+	self class isBrowser
+		ifTrue: [
+			self should: [ WebFetch get: base , '/nocors' ] raise: WebFetchNetworkError ]
+		ifFalse: [
+			resp := WebFetch get: base , '/nocors'.
+			self assert: resp status equals: 200.
+			self assert: resp contents equals: 'nocors' ].
+
 	resp := WebFetch get: base , '/redir'.
 	self assert: resp status equals: 200.
 	self assert: resp isRedirected.
+	self assert: (resp url endsWith: '/hello').
 	self assert: resp contents equals: 'hello'.
 
-	resp := (WebFetch request: base , '/redir') dontFollowRedirects; fetch.
-	self assert: (resp status between: 300 and: 399)
+	self class isBrowser
+		ifTrue: [
+			err := [ (WebFetch request: base , '/redir') dontFollowRedirects; fetch. nil ]
+				on: WebFetchBadRequest
+				do: [ :e | e ].
+			self assert: err notNil.
+			self assert: err kind equals: #redirect ]
+		ifFalse: [
+			resp := (WebFetch request: base , '/redir') dontFollowRedirects; fetch.
+			self assert: (resp status between: 300 and: 399) ]
 ]
 
 { #category : 'tests' }
@@ -174,13 +321,55 @@ WebFetchLiveTest >> testSixtyFiveOpenLimit [
 ]
 
 { #category : 'tests' }
-WebFetchLiveTest >> testTimeoutAndTruncatedBody [
-	| base |
+WebFetchLiveTest >> testTerminateClosesServer [
+	| base tag proc |
+	base := self baseUrl.
+	tag := 'tag-term-' , Time millisecondClockValue asString.
+	proc := [ (WebFetch request: base , '/hang?' , tag) timeout: 30 seconds; fetch ] fork.
+	self waitUntilSeenCountForTag: tag atLeast: 1.
+	proc terminate.
+	self waitUntilClosedCountForTag: tag atLeast: 1
+]
+
+{ #category : 'tests' }
+WebFetchLiveTest >> testTimeoutTruncatedAndWhenDone [
+	| base sem gotResp gotErr |
 	base := self baseUrl.
 	self
 		should: [ (WebFetch request: base , '/hang') timeout: 150 milliSeconds; fetch ]
 		raise: WebFetchTimeout.
 	self
 		should: [ WebFetch get: base , '/trunc' ]
-		raise: WebFetchNetworkError
+		raise: WebFetchNetworkError.
+
+	sem := Semaphore new.
+	gotResp := nil.
+	((WebFetch request: base , '/hello') start)
+		whenDone: [ :r | gotResp := r contents. sem signal ]
+		ifError: [ :e | sem signal ].
+	self deny: (sem waitTimeoutMilliseconds: 5000).
+	self assert: gotResp equals: 'hello'.
+
+	sem := Semaphore new.
+	gotErr := nil.
+	((WebFetch request: base , '/trunc') start)
+		whenDone: [ :r | sem signal ]
+		ifError: [ :e | gotErr := e. sem signal ].
+	self deny: (sem waitTimeoutMilliseconds: 5000).
+	self assert: (gotErr isKindOf: WebFetchNetworkError)
+]
+
+{ #category : 'tests' }
+WebFetchLiveTest >> testTooLargeClosesServer [
+	| base tag |
+	base := self baseUrl.
+	self
+		should: [ (WebFetch request: base , '/n?n=5242880') maximumBodySize: 1000; fetch ]
+		raise: WebFetchTooLarge.
+
+	tag := 'tag-large-' , Time millisecondClockValue asString.
+	self
+		should: [ (WebFetch request: base , '/endless?' , tag) maximumBodySize: 1000; fetch ]
+		raise: WebFetchTooLarge.
+	self waitUntilClosedCountForTag: tag atLeast: 1
 ]

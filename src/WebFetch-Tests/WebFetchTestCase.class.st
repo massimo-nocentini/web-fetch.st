@@ -46,3 +46,18 @@ WebFetchTestCase >> tearDown [
 	self assert: leakedHost equals: 0.
 	self assert: leakedCalls equals: 0
 ]
+
+{ #category : 'helpers' }
+WebFetchTestCase >> waitUntil: aBlock [
+	^ self waitUntil: aBlock timeoutMs: 2000
+]
+
+{ #category : 'helpers' }
+WebFetchTestCase >> waitUntil: aBlock timeoutMs: milliseconds [
+	| deadline |
+	deadline := Time millisecondClockValue + milliseconds.
+	[ aBlock value ] whileFalse: [
+		Time millisecondClockValue >= deadline ifTrue: [ ^ false ].
+		(Delay forMilliseconds: 5) wait ].
+	^ true
+]

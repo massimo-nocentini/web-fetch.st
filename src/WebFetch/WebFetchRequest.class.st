@@ -14,8 +14,7 @@ Class {
 		'timeout',
 		'timeoutSet',
 		'maximumBodySize',
-		'followRedirects',
-		'host'
+		'followRedirects'
 	],
 	#category : 'WebFetch-Core',
 	#package : 'WebFetch',
@@ -29,28 +28,28 @@ WebFetchRequest class >> defaultFetchTimeout [
 
 { #category : 'constants' }
 WebFetchRequest class >> defaultMaximumBodySize [
-	"64 MiB"
+	"Answer the default 64 MiB whole-body limit."
 
 	^ 67108864
 ]
 
 { #category : 'constants' }
 WebFetchRequest class >> maxHeadBytes [
-	"1 MiB"
+	"Answer the 1 MiB request head limit."
 
 	^ 1048576
 ]
 
 { #category : 'constants' }
 WebFetchRequest class >> maxRequestBodySize [
-	"64 MiB"
+	"Answer the 64 MiB request body limit."
 
 	^ 67108864
 ]
 
 { #category : 'constants' }
 WebFetchRequest class >> maxWindowSize [
-	"2^31 - 1"
+	"Answer the maximum window size (2^31 - 1)."
 
 	^ 2147483647
 ]
@@ -74,7 +73,7 @@ WebFetchRequest >> body: aByteArrayOrStringOrNil [
 
 { #category : 'building' }
 WebFetchRequest >> buildForDefaultTimeout: defaultDuration [
-	"Validate and encode { headBytes. bodyBytesOrNil. timeoutMs. flags } without mutating self"
+	"Validate and encode { headBytes. bodyBytesOrNil. timeoutMs. flags } without mutating the request."
 
 	| methodStr urlStr bodyBytes effectiveHeaders hasContentType headText headBytes timeoutMs flags |
 	methodStr := self validatedMethod.
@@ -115,17 +114,12 @@ WebFetchRequest >> dontFollowRedirects [
 	followRedirects := false
 ]
 
-{ #category : 'accessing' }
-WebFetchRequest >> effectiveHost [
-	^ host ifNil: [ WebFetchHost default ]
-]
-
 { #category : 'executing' }
 WebFetchRequest >> fetch [
-	"Execute the request and wait for its WebFetchResponse (default timeout 60 s)"
+	"Execute the request and wait for its WebFetchResponse (default timeout 60 s)."
 
 	| call |
-	self effectiveHost mayWait ifFalse: [
+	WebFetchHost default mayWait ifFalse: [
 		WebFetchInCallback signal: 'Cannot fetch inside an FFI callback' ].
 	call := WebFetchCall startWholeRequest: self defaultTimeout: self class defaultFetchTimeout.
 	^ call response
@@ -138,7 +132,7 @@ WebFetchRequest >> followRedirects [
 
 { #category : 'accessing' }
 WebFetchRequest >> headerAt: aName put: aValue [
-	"Set header case-insensitively, replacing in place to preserve header order"
+	"Set a header case-insensitively, replacing in place to preserve header order."
 
 	| lower index |
 	lower := aName asLowercase.
@@ -153,16 +147,6 @@ WebFetchRequest >> headerAt: aName put: aValue [
 { #category : 'accessing' }
 WebFetchRequest >> headers [
 	^ headers
-]
-
-{ #category : 'accessing' }
-WebFetchRequest >> host [
-	^ host
-]
-
-{ #category : 'accessing' }
-WebFetchRequest >> host: aHost [
-	host := aHost
 ]
 
 { #category : 'initialization' }
@@ -187,7 +171,7 @@ WebFetchRequest >> maximumBodySize [
 
 { #category : 'accessing' }
 WebFetchRequest >> maximumBodySize: aNumber [
-	"Set whole-body size limit in 0..2^31-2 (does not bound stream:)"
+	"Set the whole-body size limit in 0..2^31-2. Does not bound stream:."
 
 	| size |
 	aNumber isNumber ifFalse: [
@@ -212,24 +196,24 @@ WebFetchRequest >> method: aSymbolOrString [
 
 { #category : 'executing' }
 WebFetchRequest >> start [
-	"Start a whole-body call without waiting (default timeout none)"
+	"Start a whole-body call without waiting (default timeout none)."
 
 	^ WebFetchCall startWholeRequest: self defaultTimeout: nil
 ]
 
 { #category : 'executing' }
 WebFetchRequest >> startWithWindow: windowBytes [
-	"Start a streaming call with windowBytes (default timeout none); body stays unread"
+	"Start a streaming call with windowBytes (default timeout none); the body stays unread."
 
 	^ WebFetchCall startRequest: self window: windowBytes
 ]
 
 { #category : 'executing' }
 WebFetchRequest >> stream: aBlock [
-	"Stream the response body through a WebFetchBodyStream (1 MiB window; not bounded by maximumBodySize)"
+	"Stream the response body through a WebFetchBodyStream with a 1 MiB window (not bounded by maximumBodySize)."
 
 	| call headResp stream result |
-	self effectiveHost mayWait ifFalse: [
+	WebFetchHost default mayWait ifFalse: [
 		WebFetchInCallback signal: 'Cannot stream inside an FFI callback' ].
 	call := WebFetchCall startRequest: self window: WebFetchCall defaultStreamWindow.
 	headResp := call waitForHead.
@@ -245,7 +229,7 @@ WebFetchRequest >> timeout [
 
 { #category : 'accessing' }
 WebFetchRequest >> timeout: aDurationOrSecondsOrNil [
-	"Set timeout (Duration, Number of seconds, or nil/Duration zero for no timeout)"
+	"Set the timeout (Duration, Number of seconds, or nil/Duration zero for no timeout)."
 
 	timeoutSet := true.
 	aDurationOrSecondsOrNil ifNil: [

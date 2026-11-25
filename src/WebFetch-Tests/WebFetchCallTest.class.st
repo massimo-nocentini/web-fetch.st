@@ -114,16 +114,19 @@ WebFetchCallTest >> testHttpErrorStatusIsAnAnswer [
 
 { #category : 'tests' }
 WebFetchCallTest >> testMultipleWaitersAllWake [
-	| call done results |
+	| call done started results |
 	host enqueuePending.
 	call := (WebFetch request: 'http://example.test/w') start.
 	done := Semaphore new.
+	started := Semaphore new.
 	results := OrderedCollection new.
 	3 timesRepeat: [
 		[
+			started signal.
 			results add: call response rawContents.
 			done signal ] fork ].
-	(Delay forMilliseconds: 20) wait.
+	3 timesRepeat: [ self deny: (started waitTimeoutMilliseconds: 2000) ].
+	Processor yield.
 	host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://example.test/w' type: 'basic' redirected: false headers: #().
 	host pushBytes: 'ok' utf8Encoded for: host lastId.
 	host finish: host lastId.
@@ -136,7 +139,7 @@ WebFetchCallTest >> testMultipleWaitersAllWake [
 
 { #category : 'tests' }
 WebFetchCallTest >> testWaitTimeoutPollsAndTerminateDoesNotAbort [
-	| call proc |
+	| call proc started |
 	host enqueuePending.
 	call := (WebFetch request: 'http://example.test/slow') start.
 	self deny: (call waitTimeout: Duration zero).
@@ -144,10 +147,14 @@ WebFetchCallTest >> testWaitTimeoutPollsAndTerminateDoesNotAbort [
 	self assert: host openCount equals: 1.
 
 	"Terminating a process inside waitTimeout: must NOT abort the call"
-	proc := [ call waitTimeout: 10 seconds ] fork.
-	(Delay forMilliseconds: 20) wait.
+	started := Semaphore new.
+	proc := [
+		started signal.
+		call waitTimeout: 10 seconds ] fork.
+	self deny: (started waitTimeoutMilliseconds: 2000).
+	Processor yield.
 	proc terminate.
-	(Delay forMilliseconds: 20) wait.
+	self assert: (self waitUntil: [ proc isTerminated ]).
 	self assert: host openCount equals: 1.
 
 	host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://example.test/slow' type: 'basic' redirected: false headers: #().

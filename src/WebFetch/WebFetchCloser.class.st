@@ -26,7 +26,7 @@ WebFetchCloser class >> host: aHost semaphore: aSemaphore session: aSession [
 
 { #category : 'closing' }
 WebFetchCloser >> close [
-	"Idempotently close the host handle and unregister the semaphore in the current session"
+	"Close the host handle and unregister the semaphore once, only in the session that created them."
 
 	| h s |
 	h := handle.
@@ -42,7 +42,7 @@ WebFetchCloser >> close [
 
 { #category : 'finalization' }
 WebFetchCloser >> finalize [
-	"Release host resources on GC; never let an error escape finalization"
+	"Release host resources on garbage collection without letting errors escape."
 
 	[ self close ] on: Error do: [ :e | ]
 ]
@@ -60,16 +60,9 @@ WebFetchCloser >> host: aHost semaphore: aSemaphore session: aSession [
 	session := aSession
 ]
 
-{ #category : 'private' }
-WebFetchCloser >> session: aSession [
-	"Private hook for session-end tests"
-
-	session := aSession
-]
-
 { #category : 'starting' }
 WebFetchCloser >> startSemaphore: semIndex head: headBytes body: bodyBytesOrNil window: windowBytes timeout: timeoutMs flags: flags [
-	"Start the host fetch and store the handle in the same statement so no process switch can lose it"
+	"Start the host fetch and store the handle in the same statement so no process switch can lose it."
 
 	handle := host
 		startSemaphore: semIndex

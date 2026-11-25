@@ -36,28 +36,27 @@ Class {
 
 { #category : 'control' }
 WebFetchCall class >> abortAll [
-	"Abort every open call without holding OpenCallsMutex during abort"
+	"Abort every open call without holding the open-calls mutex during abort."
 
 	self openCalls do: [ :each | each abort ]
 ]
 
 { #category : 'constants' }
 WebFetchCall class >> defaultStreamWindow [
-	"1 MiB streaming window"
+	"Answer the default 1 MiB streaming window."
 
 	^ 1048576
 ]
 
 { #category : 'class initialization' }
 WebFetchCall class >> initialize [
-	OpenCalls := WeakSet new.
-	OpenCallsMutex := Mutex new.
+	self resetOpenCalls.
 	SessionManager default registerNetworkClassNamed: self name
 ]
 
 { #category : 'accessing' }
 WebFetchCall class >> openCalls [
-	"Snapshot Array of currently open calls"
+	"Answer a snapshot Array of currently open calls."
 
 	| mutex |
 	mutex := OpenCallsMutex.
@@ -74,29 +73,18 @@ WebFetchCall class >> openCount [
 
 { #category : 'private' }
 WebFetchCall class >> registerCall: aCall [
-	| mutex |
-	mutex := OpenCallsMutex ifNil: [
-		OpenCalls := WeakSet new.
-		OpenCallsMutex := Mutex new ].
-	mutex critical: [ OpenCalls add: aCall ]
+	OpenCallsMutex critical: [ OpenCalls add: aCall ]
 ]
 
-{ #category : 'system startup' }
-WebFetchCall class >> startUp: resuming [
-	"On image resume, replace the open table without locking the old mutex and wake waiters with SessionEnded"
-
-	| old |
-	resuming ifFalse: [ ^ self ].
-	old := OpenCalls.
+{ #category : 'private' }
+WebFetchCall class >> resetOpenCalls [
 	OpenCalls := WeakSet new.
-	OpenCallsMutex := Mutex new.
-	old ifNotNil: [
-		old do: [ :each | each ifNotNil: [ each markSessionEnded ] ] ]
+	OpenCallsMutex := Mutex new
 ]
 
 { #category : 'instance creation' }
 WebFetchCall class >> startRequest: aWebFetchRequest window: windowBytes [
-	"Start a streaming call whose body stays unread until readInto:startingAt:count:"
+	"Start a streaming call whose body stays unread until readInto:startingAt:count:."
 
 	^ self new
 		startRequest: aWebFetchRequest
@@ -106,9 +94,21 @@ WebFetchCall class >> startRequest: aWebFetchRequest window: windowBytes [
 		yourself
 ]
 
+{ #category : 'system startup' }
+WebFetchCall class >> startUp: resuming [
+	"On image resume, install a fresh open table without locking the old mutex and wake waiters with SessionEnded."
+
+	| old |
+	resuming ifFalse: [ ^ self ].
+	old := OpenCalls.
+	self resetOpenCalls.
+	old ifNotNil: [
+		old do: [ :each | each ifNotNil: [ each markSessionEnded ] ] ]
+]
+
 { #category : 'instance creation' }
 WebFetchCall class >> startWholeRequest: aWebFetchRequest defaultTimeout: defaultDuration [
-	"Start a whole-body call with window = maximumBodySize + 1"
+	"Start a whole-body call with window = maximumBodySize + 1."
 
 	^ self new
 		startRequest: aWebFetchRequest
@@ -133,7 +133,7 @@ WebFetchCall class >> unregisterCall: aCall [
 
 { #category : 'control' }
 WebFetchCall >> abort [
-	"Abort an in-progress call; does nothing on an already finished call"
+	"Abort an in-progress call. Does nothing on an already finished call."
 
 	self
 		endWith: (WebFetchAborted new messageText: 'WebFetch call was aborted')
@@ -142,7 +142,7 @@ WebFetchCall >> abort [
 
 { #category : 'accessing' }
 WebFetchCall >> availableBytes [
-	"Ready unread body bytes; 0 when pending, failed or closed"
+	"Answer the count of ready unread body bytes, or 0 when pending, failed or closed."
 
 	self refreshState.
 	^ availableBytes
@@ -156,14 +156,16 @@ WebFetchCall >> checkMayWait [
 
 { #category : 'private' }
 WebFetchCall >> checkSession [
-	session == Smalltalk session ifFalse: [
-		self markSessionEnded.
-		error copy signal ]
+	"Verify the call belongs to the current session; a call that finished cleanly remains usable."
+
+	session == Smalltalk session ifTrue: [ ^ self ].
+	self markSessionEnded.
+	error ifNotNil: [ :e | e copy signal ]
 ]
 
 { #category : 'control' }
 WebFetchCall >> close [
-	"Close an in-progress call; does nothing on an already finished call"
+	"Close an in-progress call. Does nothing on an already finished call."
 
 	self
 		endWith: (WebFetchAborted new messageText: 'WebFetch call was closed')
@@ -171,13 +173,8 @@ WebFetchCall >> close [
 ]
 
 { #category : 'private' }
-WebFetchCall >> closer [
-	^ closer
-]
-
-{ #category : 'private' }
 WebFetchCall >> endWith: anErrorOrNil state: anInteger [
-	"Single terminal transition for every call ending; idempotent once finished"
+	"Transition the call to its final state once, release host resources, and wake any waiters."
 
 	finished ifTrue: [ ^ self ].
 	state := anInteger.
@@ -191,7 +188,7 @@ WebFetchCall >> endWith: anErrorOrNil state: anInteger [
 
 { #category : 'accessing' }
 WebFetchCall >> error [
-	"Unsignalled WebFetchError for a failed, aborted or session-ended call, else nil"
+	"Answer the unsignalled WebFetchError for a failed, aborted or session-ended call, or nil."
 
 	(finished not and: [ session == Smalltalk session ]) ifTrue: [
 		[ self refreshState ] on: WebFetchSessionEnded do: [ :e | ] ].
@@ -200,7 +197,7 @@ WebFetchCall >> error [
 
 { #category : 'private' }
 WebFetchCall >> fetchErrorAndClose [
-	"Read the host error record once, end the call in state 4, and wake waiters"
+	"Read the host error record once, transition to state 4, and wake waiters."
 
 	| raw text lines kind msg err |
 	finished ifTrue: [ ^ self ].
@@ -222,14 +219,14 @@ WebFetchCall >> fetchErrorAndClose [
 
 { #category : 'private' }
 WebFetchCall >> finishStream [
-	"Mark a streaming call cleanly completed at EOF (state stays 3)"
+	"Mark a streaming call cleanly completed at end-of-body so its state remains 3."
 
 	self endWith: nil state: 3
 ]
 
 { #category : 'private' }
 WebFetchCall >> finishWholeBody [
-	"Finalize a whole-body call under finishMutex; abort on curtailment or read failure"
+	"Finalize a whole-body call under finishMutex, aborting if curtailed or if reading fails."
 
 	| toSignal result |
 	toSignal := nil.
@@ -269,9 +266,14 @@ WebFetchCall >> finishWholeBodyLocked [
 			hostDo: [ host read: handle into: bytes startingAt: offset count: total - offset + 1 ]
 			onFinished: [ nil ].
 		finished ifTrue: [ ^ self ].
-		n = 0
-			ifTrue: [ offset := total + 1 ]
-			ifFalse: [ offset := offset + n ] ].
+		n = 0 ifTrue: [
+			self
+				endWith: (WebFetchNetworkError
+					kind: #body
+					message: 'Unexpected end of response body before all bytes were read')
+				state: 4.
+			^ self ].
+		offset := offset + n ].
 	finished ifTrue: [ ^ self ].
 	resp rawContents: bytes.
 	response := resp.
@@ -281,13 +283,12 @@ WebFetchCall >> finishWholeBodyLocked [
 { #category : 'private' }
 WebFetchCall >> finishedReadResult [
 	state = 3 ifTrue: [ ^ 0 ].
-	error ifNotNil: [ :e | e copy signal ].
-	WebFetchAborted signal: 'WebFetch call is closed'
+	self signalErrorOfEnded
 ]
 
 { #category : 'testing' }
 WebFetchCall >> hasHead [
-	"True when status and headers are available (state 2 or 3)"
+	"Answer true when status and headers are available (state 2 or 3)."
 
 	| s |
 	s := self state.
@@ -296,19 +297,15 @@ WebFetchCall >> hasHead [
 
 { #category : 'accessing' }
 WebFetchCall >> headResponse [
-	"Parsed WebFetchResponse (body unread) once state is 2 or 3; nil in state 1; signals error on 4 or abort"
+	"Answer the cached WebFetchResponse (body unread) once state is 2 or 3, nil in state 1, or signal the error if failed or aborted."
 
 	finished ifTrue: [
-		(state = 4 or: [ state = 0 ]) ifTrue: [
-			error ifNotNil: [ :e | e copy signal ].
-			WebFetchAborted signal: 'WebFetch call is closed' ].
+		(state = 4 or: [ state = 0 ]) ifTrue: [ self signalErrorOfEnded ].
 		^ headResponse ].
 	headResponse ifNotNil: [ ^ headResponse ].
 	self refreshState.
 	finished ifTrue: [
-		(state = 4 or: [ state = 0 ]) ifTrue: [
-			error ifNotNil: [ :e | e copy signal ].
-			WebFetchAborted signal: 'WebFetch call is closed' ].
+		(state = 4 or: [ state = 0 ]) ifTrue: [ self signalErrorOfEnded ].
 		^ headResponse ].
 	state = 1 ifTrue: [ ^ nil ].
 	^ self readHeadLocked
@@ -316,7 +313,7 @@ WebFetchCall >> headResponse [
 
 { #category : 'private' }
 WebFetchCall >> hostDo: aBlock onFinished: finishedBlock [
-	"Run a host operation on handle; map a concurrent close to finishedBlock and a lost id to SessionEnded"
+	"Evaluate a host operation on handle, mapping a concurrent close to finishedBlock and a lost handle to SessionEnded."
 
 	finished ifTrue: [ ^ finishedBlock value ].
 	self checkSession.
@@ -339,7 +336,7 @@ WebFetchCall >> isClosed [
 
 { #category : 'testing' }
 WebFetchCall >> isDone [
-	"True when nothing more will arrive for the caller (whole body ready/read, failed, too large, closed, or session ended). Never signals SessionEnded. Use state = 3 for streaming EOF."
+	"Answer true when nothing more will arrive for the caller (body ready or read, failed, too large, closed, or session ended). Never signals SessionEnded. Use state = 3 for streaming EOF."
 
 	finished ifTrue: [ ^ true ].
 	session == Smalltalk session ifFalse: [
@@ -372,7 +369,7 @@ WebFetchCall >> isPending [
 
 { #category : 'private' }
 WebFetchCall >> markSessionEnded [
-	"Mark an unfinished call ended on image resume without calling primitives or unregistering"
+	"Mark an unfinished call ended after an image resume."
 
 	self
 		endWith: (WebFetchSessionEnded new
@@ -393,7 +390,7 @@ WebFetchCall >> readHeadLocked [
 
 { #category : 'reading' }
 WebFetchCall >> readInto: aByteArray startingAt: startIndex count: maxCount [
-	"Copy up to maxCount ready bytes into aByteArray at 1-based startIndex; answer bytes copied"
+	"Copy up to maxCount ready bytes into aByteArray at 1-based startIndex and answer the count copied."
 
 	| n |
 	finished ifTrue: [ ^ self finishedReadResult ].
@@ -405,8 +402,24 @@ WebFetchCall >> readInto: aByteArray startingAt: startIndex count: maxCount [
 	^ n
 ]
 
-{ #category : 'private' }
+{ #category : 'updating' }
+WebFetchCall >> recordedAvailableBytes [
+	"Answer the ready byte count from the most recent state refresh without calling the host."
+
+	^ availableBytes
+]
+
+{ #category : 'updating' }
+WebFetchCall >> recordedState [
+	"Answer the state from the most recent state refresh without calling the host."
+
+	^ state
+]
+
+{ #category : 'updating' }
 WebFetchCall >> refreshState [
+	"Query the host once to update state and availableBytes, and answer the updated state."
+
 	| raw |
 	finished ifTrue: [ ^ state ].
 	raw := self hostDo: [ host stateOf: handle ] onFinished: [ nil ].
@@ -420,10 +433,10 @@ WebFetchCall >> refreshState [
 
 { #category : 'accessing' }
 WebFetchCall >> response [
-	"Wait for the whole response and answer WebFetchResponse, or signal the call's error"
+	"Wait for the whole response and answer WebFetchResponse, or signal the call's error."
 
 	finished ifTrue: [
-		error ifNotNil: [ :e | e copy signal ].
+		error ifNotNil: [ self signalErrorOfEnded ].
 		^ response ].
 	self isDone ifFalse: [
 		self checkMayWait.
@@ -432,16 +445,11 @@ WebFetchCall >> response [
 ]
 
 { #category : 'private' }
-WebFetchCall >> semaphore [
-	^ semaphore
-]
+WebFetchCall >> signalErrorOfEnded [
+	"Signal a fresh copy of the recorded error, or WebFetchAborted if none was recorded."
 
-{ #category : 'private' }
-WebFetchCall >> session: aSession [
-	"Private hook for session-end tests"
-
-	session := aSession.
-	closer ifNotNil: [ closer session: aSession ]
+	error ifNotNil: [ :e | e copy signal ].
+	WebFetchAborted signal: 'WebFetch call is closed'
 ]
 
 { #category : 'initialization' }
@@ -452,7 +460,7 @@ WebFetchCall >> startRequest: aWebFetchRequest window: windowBytes defaultTimeou
 	bodyBytes := built at: 2.
 	timeoutMs := built at: 3.
 	flags := built at: 4.
-	host := aWebFetchRequest effectiveHost.
+	host := WebFetchHost default.
 	session := Smalltalk session.
 	semaphore := Semaphore new.
 	request := aWebFetchRequest.
@@ -464,7 +472,6 @@ WebFetchCall >> startRequest: aWebFetchRequest window: windowBytes defaultTimeou
 	finishMutex := Mutex new.
 	closer := WebFetchCloser host: host semaphore: semaphore session: session.
 	FinalizationRegistry default add: self finalizer: closer.
-	self class registerCall: self.
 	[
 		semIndex := Smalltalk registerExternalObject: semaphore.
 		self checkSession.
@@ -474,7 +481,8 @@ WebFetchCall >> startRequest: aWebFetchRequest window: windowBytes defaultTimeou
 			body: bodyBytes
 			window: windowBytes
 			timeout: timeoutMs
-			flags: flags ]
+			flags: flags.
+		self class registerCall: self ]
 		ifCurtailed: [
 			self
 				endWith: (WebFetchAborted new messageText: 'WebFetch start was curtailed')
@@ -483,14 +491,14 @@ WebFetchCall >> startRequest: aWebFetchRequest window: windowBytes defaultTimeou
 
 { #category : 'accessing' }
 WebFetchCall >> state [
-	"1 PENDING, 2 HEAD, 3 DONE, 4 FAILED, 0 closed/aborted early"
+	"Answer 1 PENDING, 2 HEAD, 3 DONE, 4 FAILED, or 0 if closed or aborted early."
 
 	^ self refreshState
 ]
 
 { #category : 'waiting' }
 WebFetchCall >> wait [
-	"Wait until isDone (aborts if curtailed); answers self and does not signal exchange errors"
+	"Wait until isDone, aborting if curtailed. Answers self without signalling exchange errors."
 
 	self isDone ifTrue: [ ^ self ].
 	self checkMayWait.
@@ -500,13 +508,13 @@ WebFetchCall >> wait [
 
 { #category : 'waiting' }
 WebFetchCall >> waitForHead [
-	"Wait until response head arrives (aborts if curtailed); answers headResponse or signals error"
+	"Wait until response headers arrive, aborting if curtailed. Answers headResponse or signals error."
 
 	headResponse ifNotNil: [
-		(state = 4 or: [ state = 0 ]) ifTrue: [ error ifNotNil: [ :e | e copy signal ] ].
+		(state = 4 or: [ state = 0 ]) ifTrue: [ self signalErrorOfEnded ].
 		^ headResponse ].
 	finished ifTrue: [
-		error ifNotNil: [ :e | e copy signal ].
+		error ifNotNil: [ self signalErrorOfEnded ].
 		^ headResponse ].
 	self checkMayWait.
 	[ self waitUntil: [ self state >= 2 ] timeout: nil ] ifCurtailed: [ self abort ].
@@ -515,7 +523,7 @@ WebFetchCall >> waitForHead [
 
 { #category : 'waiting' }
 WebFetchCall >> waitTimeout: aDuration [
-	"Wait up to aDuration for isDone; answers isDone without aborting on expiry or curtailment"
+	"Wait up to aDuration for isDone. Answers isDone without aborting on expiry or curtailment."
 
 	| ms |
 	self isDone ifTrue: [ ^ true ].
@@ -529,7 +537,7 @@ WebFetchCall >> waitTimeout: aDuration [
 
 { #category : 'waiting' }
 WebFetchCall >> waitUntil: aBlock timeout: millisecondsOrNil [
-	"Answer whether aBlock became true within millisecondsOrNil (nil = forever). Does not abort. aBlock must query the call (e.g. state, availableBytes, isDone) so state is current."
+	"Wait until aBlock answers true or millisecondsOrNil expires (nil waits indefinitely). Does not abort. aBlock must query the call so the recorded state is current."
 
 	| deadline |
 	deadline := millisecondsOrNil ifNotNil: [ Time millisecondClockValue + millisecondsOrNil ].
@@ -558,7 +566,7 @@ WebFetchCall >> waitUntil: aBlock timeout: millisecondsOrNil [
 
 { #category : 'waiting' }
 WebFetchCall >> whenDone: doneBlock ifError: errorBlock [
-	"Fork a process at the caller's priority to run doneBlock or errorBlock when the call finishes"
+	"Fork a process at the caller's priority to evaluate doneBlock or errorBlock when the call finishes."
 
 	| process |
 	process := [

@@ -11,7 +11,7 @@ Class {
 
 { #category : 'private' }
 WebFetchLifecycleTest >> packageNamed: aName [
-	"Compatible across Pharo 12 (RPackageOrganizer) and Pharo 13-15 (PackageOrganizer)"
+	"Compatible across Pharo 12 (RPackageOrganizer) and Pharo 13-15 (PackageOrganizer)."
 
 	Smalltalk at: #PackageOrganizer ifPresent: [ :cls |
 		^ cls default packageNamed: aName ifAbsent: [ nil ] ].
@@ -37,9 +37,22 @@ WebFetchLifecycleTest >> testAbortAll [
 ]
 
 { #category : 'tests' }
+WebFetchLifecycleTest >> testAbortAllDuringStartLeavesNewCallAlive [
+	| call |
+	host enqueuePending.
+	host onStart: [ WebFetch abortAll ].
+	call := (WebFetch request: 'http://example.test/start-race') start.
+	host onStart: nil.
+	[
+		self assert: call isPending.
+		self assert: host openCount equals: 1.
+		self assert: WebFetchCall openCount equals: 1 ]
+		ensure: [ call abort ]
+]
+
+{ #category : 'tests' }
 WebFetchLifecycleTest >> testAbortDuringFinishAndReadErrorCloseHost [
 	| call |
-	"Abort during whole-body read must signal WebFetchAborted and leave nothing open"
 	host enqueueStatus: 200 headers: #() body: 'payload'.
 	call := (WebFetch request: 'http://example.test/r1') start.
 	call wait.
@@ -48,7 +61,6 @@ WebFetchLifecycleTest >> testAbortDuringFinishAndReadErrorCloseHost [
 	self assert: host openCount equals: 0.
 	host onRead: nil.
 
-	"OutOfMemory/Error inside read must close the call and leave nothing open"
 	host enqueueStatus: 200 headers: #() body: 'payload'.
 	call := (WebFetch request: 'http://example.test/r2') start.
 	call wait.
@@ -60,15 +72,18 @@ WebFetchLifecycleTest >> testAbortDuringFinishAndReadErrorCloseHost [
 
 { #category : 'tests' }
 WebFetchLifecycleTest >> testAbortWhileAnotherWaits [
-	| call sem err |
+	| call started sem err |
 	host enqueuePending.
 	call := (WebFetch request: 'http://example.test/ab') start.
+	started := Semaphore new.
 	sem := Semaphore new.
 	err := nil.
 	[
+		started signal.
 		[ call response ] on: WebFetchAborted do: [ :e | err := e ].
 		sem signal ] fork.
-	(Delay forMilliseconds: 20) wait.
+	self deny: (started waitTimeoutMilliseconds: 2000).
+	Processor yield.
 	call abort.
 	self deny: (sem waitTimeoutMilliseconds: 2000).
 	self assert: err notNil.
@@ -111,6 +126,21 @@ WebFetchLifecycleTest >> testConcurrentCloseDuringStateOfNoPrimitiveFailed [
 	host onState: [ :id | call close ].
 	self assert: call state equals: 0.
 	host onState: nil
+]
+
+{ #category : 'tests' }
+WebFetchLifecycleTest >> testDoneCallSurvivesSessionForWhenDoneAndWaitUntil [
+	| doneCall sem got |
+	host enqueueStatus: 200 headers: { 'Content-Type' -> 'text/plain' } body: 'kept'.
+	doneCall := (WebFetch request: 'http://example.test/kept') start.
+	self assert: doneCall response contents equals: 'kept'.
+	doneCall session: Object new.
+	self assert: (doneCall waitUntil: [ doneCall isDone ] timeout: 0).
+	sem := Semaphore new.
+	got := nil.
+	doneCall whenDone: [ :r | got := r contents. sem signal ] ifError: [ :e | sem signal ].
+	self deny: (sem waitTimeoutMilliseconds: 2000).
+	self assert: got equals: 'kept'
 ]
 
 { #category : 'tests' }
@@ -175,12 +205,11 @@ WebFetchLifecycleTest >> testSemaphoreRegisteredAndUnregistered [
 
 { #category : 'tests' }
 WebFetchLifecycleTest >> testSessionEndWakesAllWaitersAndAllowsNewCalls [
-	| doneCall cResp cWhen cTimeout cStream sem fakeSession results after |
+	| doneCall cResp cWhen cTimeout cStream started sem fakeSession results after |
 	host enqueueStatus: 200 headers: { 'Content-Type' -> 'text/plain' } body: 'saved'.
 	doneCall := (WebFetch request: 'http://example.test/done') start.
 	self assert: doneCall response contents equals: 'saved'.
 
-	"startUp: false must not disturb open calls"
 	host enqueuePending.
 	cResp := (WebFetch request: 'http://example.test/p1') start.
 	WebFetchCall startUp: false.
@@ -194,23 +223,28 @@ WebFetchLifecycleTest >> testSessionEndWakesAllWaitersAndAllowsNewCalls [
 	cStream := (WebFetch request: 'http://example.test/p4') startWithWindow: WebFetchCall defaultStreamWindow.
 	host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://example.test/p4' type: 'basic' redirected: false headers: #().
 
+	started := Semaphore new.
 	sem := Semaphore new.
 	results := OrderedCollection new.
 	[
+		started signal.
 		[ cResp response ] on: WebFetchSessionEnded do: [ :e | results add: #resp ].
 		sem signal ] fork.
 	cWhen whenDone: [ :r | sem signal ] ifError: [ :e |
 		(e isKindOf: WebFetchSessionEnded) ifTrue: [ results add: #when ].
 		sem signal ].
 	[
+		started signal.
 		[ cTimeout waitTimeout: 10 seconds ] on: WebFetchSessionEnded do: [ :e | results add: #timeout ].
 		sem signal ] fork.
 	[
 		| stream |
 		stream := WebFetchBodyStream on: cStream response: cStream waitForHead.
+		started signal.
 		[ stream next ] on: WebFetchSessionEnded do: [ :e | results add: #stream ].
 		sem signal ] fork.
-	(Delay forMilliseconds: 30) wait.
+	3 timesRepeat: [ self deny: (started waitTimeoutMilliseconds: 2000) ].
+	Processor yield.
 
 	fakeSession := Object new.
 	{ cResp. cWhen. cTimeout. cStream } do: [ :c |
@@ -224,7 +258,6 @@ WebFetchLifecycleTest >> testSessionEndWakesAllWaitersAndAllowsNewCalls [
 	self assert: WebFetchCall openCount equals: 0.
 	self assert: doneCall response contents equals: 'saved'.
 
-	"New calls started after startUp: true work normally"
 	host enqueueStatus: 200 headers: { 'Content-Type' -> 'text/plain' } body: 'after'.
 	after := WebFetch get: 'http://example.test/after'.
 	self assert: after contents equals: 'after'
@@ -278,11 +311,9 @@ WebFetchLifecycleTest >> testTerminateWaitingProcessAborts [
 	| proc |
 	host enqueuePending.
 	proc := [ WebFetch get: 'http://example.test/hang' ] fork.
-	(Delay forMilliseconds: 30) wait.
-	self assert: host openCount equals: 1.
+	self assert: (self waitUntil: [ host openCount = 1 ]).
 	proc terminate.
-	(Delay forMilliseconds: 30) wait.
-	self assert: host openCount equals: 0.
+	self assert: (self waitUntil: [ host openCount = 0 ]).
 	self assert: host closedCount equals: 1
 ]
 

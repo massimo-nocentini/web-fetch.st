@@ -13,7 +13,7 @@ Class {
 WebFetchStreamTest >> helperNonLocalReturn [
 	host enqueuePending.
 	[
-		(Delay forMilliseconds: 10) wait.
+		self waitUntil: [ host lastId notNil ].
 		host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://example.test/nlr' type: 'basic' redirected: false headers: #().
 		host pushBytes: 'abcdef' utf8Encoded for: host lastId ] fork.
 	(WebFetch request: 'http://example.test/nlr') stream: [ :s |
@@ -123,11 +123,9 @@ WebFetchStreamTest >> testStreamTerminatedReaderCloses [
 	host enqueuePending.
 	proc := [
 		(WebFetch request: 'http://example.test/sterm') stream: [ :s | s upToEnd ] ] fork.
-	(Delay forMilliseconds: 30) wait.
-	self assert: host openCount equals: 1.
+	self assert: (self waitUntil: [ host openCount = 1 ]).
 	proc terminate.
-	(Delay forMilliseconds: 30) wait.
-	self assert: host openCount equals: 0.
+	self assert: (self waitUntil: [ host openCount = 0 ]).
 	self assert: host closedCount equals: 1
 ]
 
