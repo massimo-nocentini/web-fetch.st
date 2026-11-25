@@ -21,9 +21,10 @@
 out := Stdio stdout.
 lineEnd := OSPlatform current lineEnding.
 testCase := Smalltalk globals at: #TestCase.
-server := 'webfetch.lane' asFileReference.
-server exists ifTrue: [
-	Smalltalk globals at: #WebFetchLiveTest ifPresent: [ :live | live server: server contents substrings first ] ].
+(OSEnvironment current at: 'WEB_FETCH_SERVER' ifAbsent: [ nil ]) ifNil: [
+	server := 'webfetch.lane' asFileReference.
+	server exists ifTrue: [
+		Smalltalk globals at: #WebFetchLiveTest ifPresent: [ :live | live server: server contents substrings first ] ] ].
 #( 'WebFetch-Tests' 'WebFetch-Zinc-Tests' ) do: [ :package |
 	| classes suite result |
 	classes := (Smalltalk globals allClasses select: [ :each |

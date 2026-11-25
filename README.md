@@ -195,6 +195,7 @@ pharo --headless Pharo.image --no-default-preferences st --quit tests/run-webfet
 ```
 
 `tests/run-webfetch.st` also reads the server URL from a `webfetch.lane` file in the working directory when `WEB_FETCH_SERVER` is not set. Without a server URL, or off WebAssembly, live tests skip themselves.
+`tests/snapshot-webfetch.st`, run twice on one copy of an image, saves it while processes wait for requests and restarts it.
 
 ## License
 

@@ -8,6 +8,13 @@ Class {
 	#package : 'WebFetch-Zinc-Tests'
 }
 
+{ #category : 'accessing' }
+WebFetchZincClientTest class >> defaultTimeLimit [
+	"70 MB through a Debug VM took 24 s"
+
+	^ 60 seconds
+]
+
 { #category : 'helpers' }
 WebFetchZincClientTest >> bytes: anInteger [
 	| bytes |
