@@ -106,16 +106,86 @@ WebFetchLifecycleTest >> testAvailabilityOffAndUnavailable [
 { #category : 'tests' }
 WebFetchLifecycleTest >> testCallbackRefusesWaitingAndDoesNotStart [
 	| call |
-	host mayWait: false.
-	self should: [ WebFetch get: 'http://example.test/cb1' ] raise: WebFetchInCallback.
-	self should: [ (WebFetch request: 'http://example.test/cb2') stream: [ :s | ] ] raise: WebFetchInCallback.
-	self assert: host requests isEmpty.
+	self inCallback: [
+		self should: [ WebFetch get: 'http://example.test/cb1' ] raise: WebFetchInCallback.
+		self should: [ (WebFetch request: 'http://example.test/cb2') stream: [ :s | ] ] raise: WebFetchInCallback.
+		self assert: host requests isEmpty.
 
-	host enqueuePending.
-	call := (WebFetch request: 'http://example.test/cb3') start.
-	[
+		host enqueuePending.
+		call := (WebFetch request: 'http://example.test/cb3') start.
 		self should: [ call wait ] raise: WebFetchInCallback.
-		self should: [ call response ] raise: WebFetchInCallback ] ensure: [ call abort ]
+		self should: [ call response ] raise: WebFetchInCallback.
+		self should: [ call waitForHead ] raise: WebFetchInCallback.
+		self should: [ call waitTimeout: 1 second ] raise: WebFetchInCallback.
+		"refused, not aborted"
+		self assert: host openCount equals: 1.
+		self assert: call isPending ].
+	call abort
+]
+
+{ #category : 'tests' }
+WebFetchLifecycleTest >> testCallbackLeavesOtherProcessesAlone [
+	"A process that is not in the callback starts requests, waits and reads a stream while the callback lasts"
+
+	| results done ids |
+	results := Dictionary new.
+	done := Semaphore new.
+	host enqueueStatus: 200 headers: #( ) body: 'hello'.
+	4 timesRepeat: [ host enqueuePending ].
+	self inCallback: [
+		{
+			#get -> [ (WebFetch get: 'http://example.test/o1') rawContents asString ].
+			#wait -> [ (WebFetch request: 'http://example.test/o2') start wait; state ].
+			#timeout -> [ (WebFetch request: 'http://example.test/o3') start waitTimeout: 5 seconds ].
+			#stream -> [ (WebFetch request: 'http://example.test/o4') stream: [ :stream | stream upToEnd asString ] ].
+			#response -> [ (WebFetch request: 'http://example.test/o5') start response rawContents asString ] } do: [ :each |
+				[
+					results at: each key put: ([ each value value ] on: Error do: [ :e | e class name ]).
+					done signal ] fork.
+				Processor yield ].
+		self assert: (self waitUntil: [ host requests size = 5 ]).
+		ids := host requests allButFirst collect: [ :each | each at: #id ].
+		ids do: [ :id |
+			host deliverHeadFor: id status: 200 reason: 'OK' url: 'http://example.test/' type: 'basic' redirected: false headers: #( ).
+			host pushBytes: 'abc' utf8Encoded for: id.
+			(Delay forMilliseconds: 10) wait.
+			host finish: id ].
+		5 timesRepeat: [ self deny: (done waitTimeoutMilliseconds: 2000) ] ].
+	WebFetchCall abortAll.
+	self assert: (results at: #get) equals: 'hello'.
+	self assert: (results at: #wait) equals: 3.
+	self assert: (results at: #timeout).
+	self assert: (results at: #stream) equals: 'abc'.
+	self assert: (results at: #response) equals: 'abc'
+]
+
+{ #category : 'tests' }
+WebFetchLifecycleTest >> testCallbackWhenDone [
+	"In a callback that lets its process run, and in one that does not"
+
+	| calls results done |
+	results := OrderedCollection new.
+	done := Semaphore new.
+	2 timesRepeat: [ host enqueuePending ].
+	self inCallback: [
+		calls := (1 to: 2) collect: [ :i |
+			| call |
+			call := (WebFetch request: 'http://example.test/wdcb') start.
+			call
+				whenDone: [ :r | results add: r rawContents asString. done signal ]
+				ifError: [ :e | results add: e class name. done signal ].
+			i = 1 ifTrue: [ (Delay forMilliseconds: 20) wait ].
+			call ] ].
+	[
+		self assert: results isEmpty.
+		self assert: host openCount equals: 2.
+		host requests do: [ :each |
+			host deliverHeadFor: (each at: #id) status: 200 reason: 'OK' url: 'http://example.test/wdcb' type: 'basic' redirected: false headers: #( ).
+			host pushBytes: 'late' utf8Encoded for: (each at: #id).
+			host finish: (each at: #id) ].
+		2 timesRepeat: [ self deny: (done waitTimeoutMilliseconds: 2000) ].
+		self assert: results asArray equals: #( 'late' 'late' ) ]
+		ensure: [ calls do: [ :each | each abort ] ]
 ]
 
 { #category : 'tests' }
@@ -163,6 +233,22 @@ WebFetchLifecycleTest >> testFinalizationOf100DroppedCalls [
 	self assert: host openCount equals: 0.
 	self assert: self registeredSemaphoreCount equals: before.
 	self assert: WebFetchCall openCount equals: 0
+]
+
+{ #category : 'tests' }
+WebFetchLifecycleTest >> testFinalizedCallIsNotOpen [
+	"The set keeps a dropped call until the collection after the one that finalized it"
+
+	| call |
+	host enqueuePending.
+	call := (WebFetch request: 'http://example.test/fin') start.
+	self assert: (WebFetchCall openCalls includes: call).
+	call closer finalize.
+	self assert: host openCount equals: 0.
+	self deny: (WebFetchCall openCalls includes: call).
+	self assert: WebFetchCall openCount equals: 0.
+	WebFetch abortAll.
+	call abort
 ]
 
 { #category : 'tests' }

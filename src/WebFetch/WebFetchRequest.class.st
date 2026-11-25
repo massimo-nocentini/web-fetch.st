@@ -119,8 +119,7 @@ WebFetchRequest >> fetch [
 	"Execute the request and wait for its WebFetchResponse (default timeout 60 s)."
 
 	| call |
-	WebFetchHost default mayWait ifFalse: [
-		WebFetchInCallback signal: 'Cannot fetch inside an FFI callback' ].
+	WebFetchCall checkMayWait: WebFetchHost default.
 	call := WebFetchCall startWholeRequest: self defaultTimeout: self class defaultFetchTimeout.
 	^ call response
 ]
@@ -213,8 +212,7 @@ WebFetchRequest >> stream: aBlock [
 	"Stream the response body through a WebFetchBodyStream with a 1 MiB window (not bounded by maximumBodySize)."
 
 	| call headResp stream result |
-	WebFetchHost default mayWait ifFalse: [
-		WebFetchInCallback signal: 'Cannot stream inside an FFI callback' ].
+	WebFetchCall checkMayWait: WebFetchHost default.
 	call := WebFetchCall startRequest: self window: WebFetchCall defaultStreamWindow.
 	headResp := call waitForHead.
 	stream := WebFetchBodyStream on: call response: headResp.

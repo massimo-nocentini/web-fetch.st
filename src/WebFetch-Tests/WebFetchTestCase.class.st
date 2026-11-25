@@ -19,6 +19,14 @@ WebFetchTestCase class >> isAbstract [
 ]
 
 { #category : 'helpers' }
+WebFetchTestCase >> inCallback: aBlock [
+	"Evaluate aBlock as an FFI callback does"
+
+	host mayWait: false.
+	[ WebFetchTestCallback basicNew evaluate: aBlock ] ensure: [ host mayWait: true ]
+]
+
+{ #category : 'helpers' }
 WebFetchTestCase >> registeredSemaphoreCount [
 	| table count |
 	table := Smalltalk specialObjectsArray at: 39.

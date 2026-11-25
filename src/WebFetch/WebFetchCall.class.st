@@ -1,9 +1,11 @@
 "
 I represent one in-flight or completed HTTP exchange and act as its future.
 
-A whole-body call (`WebFetchRequest >> start` or `fetch`) starts with `window = maximumBodySize + 1` and reads its body once via `response`. A streaming call (`startRequest:window:` or `WebFetchRequest >> stream:`) leaves body bytes unread in the host until read via `readInto:startingAt:count:`. Only one process should read a call's body.
+A whole-body call (`WebFetchRequest >> start` or `fetch`) starts with `window = maximumBodySize + 1` and reads its body once via `response`. A streaming call (`startRequest:window:` or `WebFetchRequest >> stream:`) leaves body bytes unread in the host until read via `readInto:startingAt:count:`. Only one process should read a call's body. `response`, `wait` and `whenDone:ifError:` of a streaming call signal an error: without a reader its body may never end.
 
 In the UI process, `wait`, `response` and `waitForHead` block the UI until the call finishes or times out; UI tools should use `whenDone:ifError:` instead.
+
+A process inside an FFI callback cannot wait (`WebFetchInCallback`): no event of the host comes before the callback returns. The other processes may wait meanwhile, and `whenDone:ifError:` works in a callback, its blocks being evaluated after it. A callback must not wait for another process that waits for a call.
 "
 Class {
 	#name : 'WebFetchCall',
@@ -41,6 +43,15 @@ WebFetchCall class >> abortAll [
 	self openCalls do: [ :each | each abort ]
 ]
 
+{ #category : 'private' }
+WebFetchCall class >> checkMayWait: aHost [
+	"While an FFI callback runs no event of the host comes: a wait of the callback itself would never end.
+	The wait of another process ends after the callback"
+
+	(aHost mayWait not and: [ self isInCallback ]) ifTrue: [
+		WebFetchInCallback signal: 'Cannot wait on WebFetch inside an FFI callback' ]
+]
+
 { #category : 'constants' }
 WebFetchCall class >> defaultStreamWindow [
 	"Answer the default 1 MiB streaming window."
@@ -54,16 +65,30 @@ WebFetchCall class >> initialize [
 	SessionManager default registerNetworkClassNamed: self name
 ]
 
+{ #category : 'private' }
+WebFetchCall class >> isInCallback [
+	"Answer whether the active process evaluates an FFI callback"
+
+	| invocation context |
+	invocation := Smalltalk globals at: #TFCallbackInvocation ifAbsent: [ ^ false ].
+	context := thisContext sender.
+	[ (context receiver class includesBehavior: invocation) ifTrue: [ ^ true ].
+	context := context sender.
+	context isNil ] whileFalse.
+	^ false
+]
+
 { #category : 'accessing' }
 WebFetchCall class >> openCalls [
-	"Answer a snapshot Array of currently open calls."
+	"Answer a snapshot Array of currently open calls. A dropped call that the finalizer closed stays in the set until the next garbage collection."
 
 	| mutex |
 	mutex := OpenCallsMutex.
 	mutex ifNil: [ ^ #() ].
 	^ mutex critical: [
 		Array streamContents: [ :stream |
-			OpenCalls do: [ :each | each ifNotNil: [ stream nextPut: each ] ] ] ]
+			OpenCalls do: [ :each |
+				each ifNotNil: [ each hasHandle ifTrue: [ stream nextPut: each ] ] ] ] ]
 ]
 
 { #category : 'accessing' }
@@ -150,8 +175,7 @@ WebFetchCall >> availableBytes [
 
 { #category : 'private' }
 WebFetchCall >> checkMayWait [
-	host mayWait ifFalse: [
-		WebFetchInCallback signal: 'Cannot wait on WebFetch inside an FFI callback' ]
+	self class checkMayWait: host
 ]
 
 { #category : 'private' }
@@ -161,6 +185,12 @@ WebFetchCall >> checkSession [
 	session == Smalltalk session ifTrue: [ ^ self ].
 	self markSessionEnded.
 	error ifNotNil: [ :e | e copy signal ]
+]
+
+{ #category : 'private' }
+WebFetchCall >> checkWholeBody [
+	isWholeBody ifFalse: [
+		self error: 'The body of a streaming call is read with readInto:startingAt:count:' ]
 ]
 
 { #category : 'control' }
@@ -284,6 +314,11 @@ WebFetchCall >> finishWholeBodyLocked [
 WebFetchCall >> finishedReadResult [
 	state = 3 ifTrue: [ ^ 0 ].
 	self signalErrorOfEnded
+]
+
+{ #category : 'private' }
+WebFetchCall >> hasHandle [
+	^ closer handle notNil
 ]
 
 { #category : 'testing' }
@@ -435,6 +470,7 @@ WebFetchCall >> refreshState [
 WebFetchCall >> response [
 	"Wait for the whole response and answer WebFetchResponse, or signal the call's error."
 
+	self checkWholeBody.
 	finished ifTrue: [
 		error ifNotNil: [ self signalErrorOfEnded ].
 		^ response ].
@@ -500,6 +536,7 @@ WebFetchCall >> state [
 WebFetchCall >> wait [
 	"Wait until isDone, aborting if curtailed. Answers self without signalling exchange errors."
 
+	self checkWholeBody.
 	self isDone ifTrue: [ ^ self ].
 	self checkMayWait.
 	[ self waitUntil: [ self isDone ] timeout: nil ] ifCurtailed: [ self abort ].
@@ -569,6 +606,7 @@ WebFetchCall >> whenDone: doneBlock ifError: errorBlock [
 	"Fork a process at the caller's priority to evaluate doneBlock or errorBlock when the call finishes."
 
 	| process |
+	self checkWholeBody.
 	process := [
 		| ok resp err |
 		ok := false.

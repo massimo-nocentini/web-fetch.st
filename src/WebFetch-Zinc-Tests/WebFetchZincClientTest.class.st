@@ -50,6 +50,17 @@ WebFetchZincClientTest >> testAbortAll [
 	[ self waitUntil: [ host openCount = 1 ].
 	WebFetchCall abortAll ] fork.
 	self should: [ client get ] raise: WebFetchAborted.
+	self deny: client isConnected.
+
+	"and in the middle of the body"
+	host enqueuePending.
+	client := self client.
+	[ self waitUntil: [ host openCount = 1 ].
+	host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://host:81/' type: 'basic' redirected: false headers: #( ).
+	host pushBytes: 'abc' utf8Encoded for: host lastId.
+	(Delay forMilliseconds: 50) wait.
+	WebFetchCall abortAll ] fork.
+	self should: [ client get ] raise: WebFetchAborted.
 	self deny: client isConnected
 ]
 
@@ -267,11 +278,25 @@ WebFetchZincClientTest >> testIfFailAndEnforce [
 WebFetchZincClientTest >> testInCallback [
 	| client |
 	host enqueuePending.
-	host mayWait: false.
 	client := self client.
-	self should: [ client get ] raise: WebFetchInCallback.
+	self inCallback: [ self should: [ client get ] raise: WebFetchInCallback ].
 	self deny: client isConnected.
 	self assert: host openCount equals: 0
+]
+
+{ #category : 'tests' }
+WebFetchZincClientTest >> testInCallbackOfAnother [
+	"A client that is not in the callback works while the callback lasts"
+
+	| done text |
+	self enqueue: 'hello'.
+	done := Semaphore new.
+	self inCallback: [
+		[
+			text := [ self client get ] on: Error do: [ :error | error class name ].
+			done signal ] fork.
+		self deny: (done waitTimeoutMilliseconds: 2000) ].
+	self assert: text equals: 'hello'
 ]
 
 { #category : 'tests' }
@@ -314,6 +339,7 @@ WebFetchZincClientTest >> testNoBody [
 		client get.
 		self assert: client response code equals: status.
 		self assert: client response contents isEmptyOrNil.
+		self deny: (client response headers includesKey: 'Transfer-Encoding').
 		self deny: client isConnected ]
 ]
 

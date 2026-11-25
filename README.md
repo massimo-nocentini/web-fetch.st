@@ -148,7 +148,8 @@ All errors inherit from `WebFetchError` and carry a `kind` symbol:
 - **Stop and unwinding**: `fetch`, `get:`, `post:body:type:`, `stream:`, `wait`, `response` and `waitForHead` abort the host request when curtailed (Stop in Console/Notebook/World, process `terminate`, or exception unwinding). `waitTimeout:` and `whenDone:ifError:` do not abort on curtailment or timeout expiry.
 - **UI process**: waiting messages (`fetch`, `get:`, `post:body:type:`, `stream:`, `wait`, `response`) freeze the world while waiting, as a socket does natively; Stop in the world opens a debugger on the process, and the request stays open until the debugger is closed. UI tools should use `start` with `whenDone:ifError:` and `UIManager default defer:`.
 - **Sessions**: `WebFetchCall` registers with `SessionManager`. When a saved image resumes in a new session, in-progress calls fail with `WebFetchSessionEnded` and wake any waiting processes without hanging. Calls that already finished keep their cached response.
-- **FFI callbacks**: starting and reading work inside an FFI callback; blocking waits check `WebFetchHost >> mayWait` (`primitiveMayWait`) and signal `WebFetchInCallback` immediately (`fetch` and `stream:` fail before starting any request).
+- **FFI callbacks**: while one runs, no event of the host comes. Starting and reading work inside it; a wait of the process that evaluates it signals `WebFetchInCallback` at once (`fetch` and `stream:` before they start a request), and leaves a call open. `whenDone:ifError:` works in a callback: its blocks are evaluated after it. Other processes start requests and wait as ever, their waits end after the callback. A callback that waits for another process which waits for a call never ends: this is not seen.
+- **Streaming calls** (`startWithWindow:`): `response`, `wait` and `whenDone:ifError:` signal an error, since the body of such a call ends only when it is read.
 
 ## Limits and defaults
 
@@ -195,6 +196,7 @@ pharo --headless Pharo.image --no-default-preferences st --quit tests/run-webfet
 ```
 
 `tests/run-webfetch.st` also reads the server URL from a `webfetch.lane` file in the working directory when `WEB_FETCH_SERVER` is not set. Without a server URL, or off WebAssembly, live tests skip themselves.
+`tests/callback-webfetch.st` makes requests while a real FFI callback runs (the node VM with the FFI).
 `tests/snapshot-webfetch.st`, run twice on one copy of an image, saves it while processes wait for requests and restarts it.
 
 ## License

@@ -62,6 +62,23 @@ WebFetchCallTest >> testBodySizesZeroOneExactAndTooLarge [
 ]
 
 { #category : 'tests' }
+WebFetchCallTest >> testStreamingCallRefusesWholeBodyMessages [
+	"They would wait for ever for a body that nobody reads, once it is larger than the window"
+
+	| call |
+	host enqueuePending.
+	call := (WebFetch request: 'http://example.test/str') startWithWindow: 10.
+	[
+		{ [ call response ]. [ call wait ]. [ call whenDone: [ :r | ] ifError: [ :e | ] ] } do: [ :each |
+			self
+				should: [ each valueWithin: 1 second onTimeout: [ self fail: 'it waits' ] ]
+				raise: Error
+				whoseDescriptionIncludes: 'streaming call'
+				description: 'refused' ].
+		self assert: host openCount equals: 1 ] ensure: [ call abort ]
+]
+
+{ #category : 'tests' }
 WebFetchCallTest >> testTooLargeAcrossMultipleChunksWakesWaiter [
 	| call started done gotTooLarge id |
 	host enqueuePending.
@@ -190,8 +207,8 @@ WebFetchCallTest >> testWaitTimeoutPollsAndTerminateDoesNotAbort [
 ]
 
 { #category : 'tests' }
-WebFetchCallTest >> testWhenDoneAlreadyDoneMultiplePriorityAndCallback [
-	| call sem results proc err |
+WebFetchCallTest >> testWhenDoneAlreadyDoneMultiplePriority [
+	| call sem results proc |
 	host enqueueStatus: 200 headers: { 'Content-Type' -> 'text/plain' } body: 'ready'.
 	call := (WebFetch request: 'http://example.test/wd1') start.
 	call wait.
@@ -202,22 +219,7 @@ WebFetchCallTest >> testWhenDoneAlreadyDoneMultiplePriorityAndCallback [
 	call whenDone: [ :r | results add: r contents. sem signal ] ifError: [ :e | sem signal ].
 	results add: call response contents.
 	2 timesRepeat: [ self deny: (sem waitTimeoutMilliseconds: 2000) ].
-	self assert: results asArray equals: #( 'ready' 'ready' 'ready' ).
-
-	"whenDone in a callback gives WebFetchInCallback to errorBlock and leaves call open"
-	host enqueuePending.
-	call := (WebFetch request: 'http://example.test/wdcb') start.
-	host mayWait: false.
-	sem := Semaphore new.
-	err := nil.
-	[
-		call whenDone: [ :r | sem signal ] ifError: [ :e | err := e. sem signal ].
-		self deny: (sem waitTimeoutMilliseconds: 2000).
-		self assert: (err isKindOf: WebFetchInCallback).
-		self assert: host openCount equals: 1 ]
-		ensure: [
-			host mayWait: true.
-			call abort ]
+	self assert: results asArray equals: #( 'ready' 'ready' 'ready' )
 ]
 
 { #category : 'tests' }
