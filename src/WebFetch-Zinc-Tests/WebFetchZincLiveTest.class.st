@@ -32,17 +32,15 @@ WebFetchZincLiveTest >> client: aPath [
 ]
 
 { #category : 'helpers' }
-WebFetchZincLiveTest >> isClosed: aTag [
-	"Answer whether the server saw the client go before the end of the answer"
-
-	^ self requests anySatisfy: [ :each | ((each at: 'url') includesSubstring: aTag) and: [ each at: 'closed' ] ]
-]
-
-{ #category : 'helpers' }
 WebFetchZincLiveTest >> requests [
 	"Answer those that the server saw"
 
 	^ (STONJSON fromString: (WebFetch get: self baseUrl , '/_stats') contents) at: 'requests'
+]
+
+{ #category : 'helpers' }
+WebFetchZincLiveTest >> requestsWith: aTag [
+	^ self requests select: [ :each | (each at: 'url') includesSubstring: aTag ]
 ]
 
 { #category : 'running' }
@@ -55,8 +53,7 @@ WebFetchZincLiveTest >> setUp [
 { #category : 'running' }
 WebFetchZincLiveTest >> tearDown [
 	previousUtils ifNotNil: [ ZnNetworkingUtils default: previousUtils ].
-	super tearDown.
-	self assert: WebFetchCall openCount equals: 0
+	[ self assert: WebFetchCall openCount equals: 0 ] ensure: [ super tearDown ]
 ]
 
 { #category : 'helpers' }
@@ -71,8 +68,10 @@ WebFetchZincLiveTest >> testBig [
 	bytes := client get.
 	self assert: bytes size equals: 20000000.
 	self assert: (bytes at: 12345679) equals: (12345678 bitAnd: 255).
-	self should: [ (self client: '/n?n=20000000') maximumEntitySize: 1000; get ] raise: ZnEntityTooLarge.
-	WebFetch abortAll
+	client := self client: '/n?n=20000000'.
+	client maximumEntitySize: 1000.
+	self should: [ client get ] raise: ZnEntityTooLarge.
+	client close
 ]
 
 { #category : 'tests' }
@@ -146,11 +145,11 @@ WebFetchZincLiveTest >> testManyClients [
 	| base done sizes |
 	base := self baseUrl.
 	done := Semaphore new.
-	sizes := OrderedCollection new.
+	sizes := Array new: 20.
 	1 to: 20 do: [ :i |
-		[ [ sizes add: (ZnClient new timeout: 10; get: base , '/n?n=' , (i * 1000) asString) size ] ensure: [ done signal ] ] fork ].
+		[ [ sizes at: i put: (ZnClient new timeout: 10; get: base , '/n?n=' , (i * 1000) asString) size ] ensure: [ done signal ] ] fork ].
 	20 timesRepeat: [ done waitTimeoutSeconds: 20 ].
-	self assert: sizes asSortedCollection asArray equals: ((1 to: 20) collect: [ :i | i * 1000 ]) asArray
+	self assert: sizes equals: ((1 to: 20) collect: [ :i | i * 1000 ]) asArray
 ]
 
 { #category : 'tests' }
@@ -216,7 +215,7 @@ WebFetchZincLiveTest >> testTerminate [
 	tag := self tag.
 	client := self client: '/hang?' , tag.
 	process := [ client timeout: 60; get ] fork.
-	(Delay forMilliseconds: 300) wait.
+	self waitUntil: [ (self requestsWith: tag) notEmpty ].
 	process terminate.
 	self waitUntilClosed: tag
 ]
@@ -230,9 +229,16 @@ WebFetchZincLiveTest >> testTimeout [
 ]
 
 { #category : 'helpers' }
-WebFetchZincLiveTest >> waitUntilClosed: aTag [
+WebFetchZincLiveTest >> waitUntil: aBlock [
 	100 timesRepeat: [
-		(self isClosed: aTag) ifTrue: [ ^ self ].
+		aBlock value ifTrue: [ ^ self ].
 		(Delay forMilliseconds: 30) wait ].
-	self fail: 'The server did not see the close'
+	self fail: 'It did not happen'
+]
+
+{ #category : 'helpers' }
+WebFetchZincLiveTest >> waitUntilClosed: aTag [
+	"Until the server saw the client go before the end of the answer"
+
+	self waitUntil: [ (self requestsWith: aTag) anySatisfy: [ :each | each at: 'closed' ] ]
 ]

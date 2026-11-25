@@ -1,5 +1,5 @@
 "
-I look like a connection to a server, for Zinc: what is written to me is gathered, the first read makes a `WebFetch` request of it, and the answer comes out as HTTP/1.1 text. I do one exchange; after it I am not connected.
+I look like a connection to a server, for Zinc: what is written to me is gathered, the first read makes a `WebFetch` request of it, and the answer comes out as HTTP/1.1 text. I do one exchange; after it I am not connected. One process reads and writes me; another may close me.
 
 A body comes out in chunks (Transfer-Encoding: chunked), whatever its encoding on the wire was: its length is not known, or is that of the compressed one. Its bytes are read straight into the buffer of the reader. The last chunk comes only when the body is complete, so that a broken one is never taken for a whole one.
 
@@ -35,10 +35,7 @@ WebFetchSocketStream >> bodyOf: rest headers: headers [
 	| length |
 	(headers anySatisfy: [ :each |
 		each key = 'transfer-encoding' and: [ each value asLowercase = 'chunked' ] ]) ifTrue: [
-			"ZnChunkedReadStream does not see that the last chunk is missing"
-			(rest endsWith: self lastChunk) ifFalse: [
-				WebFetchBadRequest signal: 'The body has no last chunk' ].
-			^ (ZnChunkedReadStream on: rest readStream) upToEnd ].
+			^ self dechunk: rest readStream ].
 	length := headers detect: [ :each | each key = 'content-length' ] ifNone: [ ^ rest ].
 	length value = rest size asString ifFalse: [
 		WebFetchBadRequest signal: 'The body has ' , rest size asString , ' bytes, its Content-Length is ' , length value ].
@@ -52,9 +49,32 @@ WebFetchSocketStream >> checkCall [
 	(call recordedState = 4 or: [ call recordedState = 0 ]) ifTrue: [ call error copy signal ]
 ]
 
+{ #category : 'private - request' }
+WebFetchSocketStream >> chunkSizeOf: aLine [
+	| text |
+	text := (self withoutCr: aLine) asUppercase.
+	(text notEmpty and: [ text allSatisfy: [ :each | each digitValue between: 0 and: 15 ] ]) ifFalse: [
+		self signalBadChunks ].
+	^ Integer readFrom: text base: 16
+]
+
 { #category : 'networking' }
 WebFetchSocketStream >> connect [
 	"The TLS handshake is the host's"
+]
+
+{ #category : 'private - request' }
+WebFetchSocketStream >> dechunk: aStream [
+	"Not with ZnChunkedReadStream: it does not see that the last chunk, or a part of one, is missing"
+
+	^ ByteArray streamContents: [ :out |
+		| size bytes |
+		[ (size := self chunkSizeOf: (aStream upTo: 10)) > 0 ] whileTrue: [
+			aStream size - aStream position < size ifTrue: [ self signalBadChunks ].
+			bytes := aStream next: size.
+			out nextPutAll: bytes.
+			(aStream upTo: 10) = #[ 13 ] ifFalse: [ self signalBadChunks ] ].
+		aStream upToEnd = #[ 13 10 ] ifFalse: [ self signalBadChunks ] ]
 ]
 
 { #category : 'private' }
@@ -127,7 +147,7 @@ WebFetchSocketStream >> isReady [
 
 	(segment atEnd not or: [ chunkLeft > 0 ]) ifTrue: [ ^ true ].
 	isEnded ifTrue: [ ^ false ].
-	call ifNil: [ self startCall ].
+	call ifNil: [ self start: (self requestFrom: outgoing contents readStream) ].
 	call state = 1 ifTrue: [ ^ false ].
 	self checkCall.
 	isHeadMade ifFalse: [
@@ -140,11 +160,6 @@ WebFetchSocketStream >> isReady [
 		self makeLastChunk.
 		^ true ].
 	^ false
-]
-
-{ #category : 'private' }
-WebFetchSocketStream >> lastChunk [
-	^ ('0' , String crlf , String crlf) asByteArray
 ]
 
 { #category : 'private - answer' }
@@ -167,11 +182,13 @@ WebFetchSocketStream >> makeChunk [
 WebFetchSocketStream >> makeHead [
 	| response hasBody text |
 	response := call headResponse.
+	"closed meanwhile by another process"
+	response ifNil: [ self checkCall ].
 	hasBody := self hasBody: response status.
 	text := String streamContents: [ :out |
 		out << 'HTTP/1.1 ' << response status asString << ' ' << response reason << String crlf.
 		response headersDo: [ :name :value |
-			(self passes: name hasBody: hasBody) ifTrue: [
+			(self passes: name) ifTrue: [
 				out << name << ': ' << value << String crlf ] ].
 		response isRedirected ifTrue: [
 			out << 'X-WebFetch-Url: ' << response url << String crlf ].
@@ -186,7 +203,7 @@ WebFetchSocketStream >> makeHead [
 
 { #category : 'private - answer' }
 WebFetchSocketStream >> makeLastChunk [
-	segment := self lastChunk readStream.
+	segment := ('0' , String crlf , String crlf) asByteArray readStream.
 	isComplete := true.
 	call close
 ]
@@ -200,7 +217,7 @@ WebFetchSocketStream >> on: aUrl [
 ]
 
 { #category : 'private - answer' }
-WebFetchSocketStream >> passes: aName hasBody: aBoolean [
+WebFetchSocketStream >> passes: aName [
 	"The headers about the form of the body are of no use: it comes decoded, in chunks of mine"
 
 	| name |
@@ -244,7 +261,7 @@ WebFetchSocketStream >> linesOfHead: aStream [
 		line := aStream upTo: 10.
 		line = #[ 13 ] ] whileFalse: [
 			aStream atEnd ifTrue: [ WebFetchBadRequest signal: 'No whole HTTP request was written' ].
-			lines add: (line copyWithout: 13) asString ].
+			lines add: (self withoutCr: line) ].
 	^ lines
 ]
 
@@ -252,17 +269,17 @@ WebFetchSocketStream >> linesOfHead: aStream [
 WebFetchSocketStream >> requestFrom: aStream [
 	"Answer the WebFetchRequest of the HTTP request on aStream. The target is taken as it is written, not encoded again"
 
-	| lines target headers body request |
+	| lines parts headers body request |
 	lines := self linesOfHead: aStream.
-	lines ifEmpty: [ WebFetchBadRequest signal: 'No HTTP request line' ].
-	method := lines first copyUpTo: Character space.
-	target := (lines first copyAfter: Character space) copyUpToLast: Character space.
+	parts := lines ifEmpty: [ #(  ) ] ifNotEmpty: [ lines first substrings: ' ' ].
+	parts size = 3 ifFalse: [ WebFetchBadRequest signal: 'No HTTP request line' ].
+	method := parts first.
 	headers := lines allButFirst collect: [ :each | self headerOf: each ].
 	body := self bodyOf: aStream upToEnd headers: headers.
 	request := WebFetch request: (String streamContents: [ :out |
 		out << url scheme << '://' << url host.
 		url hasPort ifTrue: [ out << ':' << url port asString ].
-		out << target ]).
+		out << parts second ]).
 	request method: method.
 	request headers addAll: headers.
 	body ifNotEmpty: [ request body: body ].
@@ -284,9 +301,13 @@ WebFetchSocketStream >> socketIsConnected [
 WebFetchSocketStream >> socketIsDataAvailable [
 	"Before the first read the request may be half written: then it does not start"
 
+	| request |
 	call ifNil: [
-		isEnded ifTrue: [ ^ false ].
-		[ self requestFrom: outgoing contents readStream ] on: WebFetchBadRequest do: [ ^ false ] ].
+		outgoing ifNil: [ ^ false ].
+		request := [ self requestFrom: outgoing contents readStream ]
+			on: WebFetchBadRequest
+			do: [ ^ false ].
+		self fetchDo: [ self start: request ] ].
 	^ self fetchDo: [ self isReady ]
 ]
 
@@ -311,9 +332,9 @@ WebFetchSocketStream >> socketSendData: bytes startingAt: offset count: count [
 	call ifNotNil: [
 		writeBuffer reset.
 		ConnectionClosed signal: 'One request per connection' ].
-	outgoing position + count > WebFetchRequest maxRequestBodySize ifTrue: [
+	outgoing position + count > (WebFetchRequest maxHeadBytes + WebFetchRequest maxRequestBodySize) ifTrue: [
 		self end.
-		WebFetchBadRequest signal: 'Request exceeds 64 MiB limit' ].
+		WebFetchBadRequest signal: 'Request body exceeds 64 MiB limit' ].
 	outgoing next: count putAll: bytes startingAt: offset.
 	^ count
 ]
@@ -342,15 +363,29 @@ WebFetchSocketStream >> sslSession [
 ]
 
 { #category : 'private - request' }
-WebFetchSocketStream >> startCall [
-	| request |
-	request := self requestFrom: outgoing contents readStream.
+WebFetchSocketStream >> signalBadChunks [
+	WebFetchBadRequest signal: 'The chunked body is not whole'
+]
+
+{ #category : 'private - request' }
+WebFetchSocketStream >> start: aWebFetchRequest [
 	outgoing := nil.
-	call := request startWithWindow: WebFetchCall defaultStreamWindow
+	call := aWebFetchRequest startWithWindow: WebFetchCall defaultStreamWindow.
+	"closed meanwhile by another process"
+	isEnded ifTrue: [ call close ]
 ]
 
 { #category : 'private' }
 WebFetchSocketStream >> waitForData [
 	^ self isReady or: [
 		isEnded not and: [ call waitUntil: [ self isReady ] timeout: (timeout * 1000) rounded ] ]
+]
+
+{ #category : 'private - request' }
+WebFetchSocketStream >> withoutCr: aLine [
+	"Answer a String. Only the end of the line goes: another CR is refused later"
+
+	^ (aLine notEmpty and: [ aLine last = 13 ])
+		ifTrue: [ aLine allButLast asString ]
+		ifFalse: [ aLine asString ]
 ]

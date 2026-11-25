@@ -63,7 +63,7 @@ WebFetchZincClientTest >> testBigUploadIsRefused [
 	| client chunk stream |
 	stream := WebFetchSocketStream on: 'http://host/' asZnUrl.
 	chunk := ByteArray new: 1048576.
-	64 timesRepeat: [ stream nextPutAll: chunk ].
+	65 timesRepeat: [ stream nextPutAll: chunk ].
 	self should: [ stream nextPutAll: #[ 1 ]; flush ] raise: WebFetchBadRequest.
 	self deny: stream isConnected.
 	stream close.
@@ -81,8 +81,6 @@ WebFetchZincClientTest >> testBigUploadIsRefused [
 
 { #category : 'tests' }
 WebFetchZincClientTest >> testBrokenBody [
-	"The bytes announced by a chunk are gone when the body breaks off"
-
 	| client stream id |
 	host enqueuePending.
 	client := self client streaming: true; yourself.
@@ -99,6 +97,27 @@ WebFetchZincClientTest >> testBrokenBody [
 		whoseDescriptionIncludes: 'broken'
 		description: 'the cause'.
 	self deny: client isConnected
+]
+
+{ #category : 'tests' }
+WebFetchZincClientTest >> testBrokenBodyInChunk [
+	"The bytes announced by a chunk are gone when the body breaks off"
+
+	| stream id |
+	host enqueuePending.
+	stream := self requestOf: 'GET /x HTTP/1.1
+
+' withUnixLineEndings.
+	self deny: stream isDataAvailable.
+	id := host lastId.
+	host deliverHeadFor: id status: 200 reason: 'OK' url: 'http://host/' type: 'basic' redirected: false headers: {  }.
+	host pushBytes: (ByteArray new: 40000) for: id.
+	"the status, one header, the empty line and the size of the chunk"
+	4 timesRepeat: [ stream upTo: 10 ].
+	self assert: stream next equals: 0.
+	host fail: id kind: #body message: 'broken'.
+	self should: [ 40000 timesRepeat: [ stream next ] ] raise: WebFetchZnNetworkError.
+	self deny: stream isConnected
 ]
 
 { #category : 'tests' }
@@ -140,6 +159,21 @@ WebFetchZincClientTest >> testCloseWhileWaiting [
 	[ self waitUntil: [ host openCount = 1 ].
 	client close ] fork.
 	self should: [ client get ] raise: WebFetchAborted
+]
+
+{ #category : 'tests' }
+WebFetchZincClientTest >> testCloseWhileStarting [
+	"The call that was being started is not left open"
+
+	| stream |
+	host enqueuePending.
+	stream := self requestOf: 'GET /x HTTP/1.1
+
+' withUnixLineEndings.
+	host onStart: [ stream close ].
+	self should: [ stream next ] raise: WebFetchAborted.
+	self assert: host requests size equals: 1.
+	self assert: host openCount equals: 0
 ]
 
 { #category : 'tests' }
@@ -248,7 +282,7 @@ WebFetchZincClientTest >> testLongUrl [
 WebFetchZincClientTest >> testManyClients [
 	| done results |
 	done := Semaphore new.
-	results := OrderedCollection new.
+	results := Array new: 20.
 	host onRequest: [ :request |
 		| id |
 		id := request at: #id.
@@ -257,11 +291,11 @@ WebFetchZincClientTest >> testManyClients [
 		host pushBytes: ((request at: #url) asByteArray) for: id.
 		host finish: id ].
 	1 to: 20 do: [ :i |
-		[ [ results add: (ZnClient new get: 'http://host:81/' , i asString) asByteArray asString ] ensure: [ done signal ] ] fork ].
+		[ [ results at: i put: (ZnClient new get: 'http://host:81/' , i asString) asByteArray asString ] ensure: [ done signal ] ] fork ].
 	20 timesRepeat: [ done waitTimeoutSeconds: 5 ].
 	self
-		assert: results asSet
-		equals: ((1 to: 20) collect: [ :i | 'http://host:81/' , i asString ]) asSet
+		assert: results
+		equals: ((1 to: 20) collect: [ :i | 'http://host:81/' , i asString ]) asArray
 ]
 
 { #category : 'tests' }
@@ -296,6 +330,28 @@ Transfer-Encoding: chunked
 
 2
 ab
+' 'POST /x HTTP/1.1
+Transfer-Encoding: chunked
+
+10
+
+' 'POST /x HTTP/1.1
+Transfer-Encoding: chunked
+
+zz
+0
+
+' 'POST /x HTTP/1.1
+Transfer-Encoding: chunked
+
+2
+ab
+0
+
+rest' 'GARBAGE
+
+' 'GET /x
+
 ' 'POST /x HTTP/1.1
 Content-Length: 5
 
@@ -412,6 +468,16 @@ de
 ]
 
 { #category : 'tests' }
+WebFetchZincClientTest >> testRequestWithControlCharacter [
+	"A CR that Zinc lets pass in a header is refused"
+
+	| client |
+	client := self client headerAt: 'X-B' put: 'a' , String cr , 'b'; yourself.
+	self should: [ client get ] raise: WebFetchBadRequest.
+	self assert: host requests isEmpty
+]
+
+{ #category : 'tests' }
 WebFetchZincClientTest >> testRetry [
 	"A network error is retried, a bad request is not"
 
@@ -488,9 +554,12 @@ WebFetchZincClientTest >> testTimeout [
 
 { #category : 'tests' }
 WebFetchZincClientTest >> testTooLargeEntity [
+	| client |
 	self enqueue: (self bytes: 100000).
-	self should: [ self client maximumEntitySize: 1000; get ] raise: ZnEntityTooLarge.
-	WebFetchCall abortAll
+	client := self client maximumEntitySize: 1000; yourself.
+	self should: [ client get ] raise: ZnEntityTooLarge.
+	client close.
+	self assert: host openCount equals: 0
 ]
 
 { #category : 'tests' }

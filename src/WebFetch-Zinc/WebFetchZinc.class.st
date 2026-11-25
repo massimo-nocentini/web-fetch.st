@@ -10,7 +10,7 @@ What differs from a socket:
 - The host sets Accept-Encoding, Host, Connection and, in a browser, User-Agent; those of Zinc are dropped. A compressed answer comes decompressed, without Content-Length.
 - In a browser Authorization, a JSON body or a custom header cost a CORS preflight, and a refusal has no reason. The API and raw servers of GitHub allow it, the zip archives of codeload do not.
 - An upload is gathered whole before it is sent, at most 64 MiB; a GET with a body is refused.
-- One exchange per connection.
+- One exchange per connection. A client that streams, or that failed while reading (`ZnEntityTooLarge`), has to be closed, as with a socket: else the request stays until the client is collected.
 - Waiting in an FFI callback signals `WebFetchInCallback`. In the UI process it freezes the world, as a socket does.
 
 Errors: `ConnectionTimedOut` after the timeout of the client without data, `WebFetchZnNetworkError` (a `NetworkError`) when the network fails or is off, other `WebFetchError`s as they are.

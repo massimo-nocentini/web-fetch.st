@@ -108,7 +108,8 @@ WebFetchNetworkingUtils >> previous: aZnNetworkingUtils [
 
 { #category : 'proxy' }
 WebFetchNetworkingUtils >> proxyAuthorizationHeaderValueToUrl: aUrl [
-	^ (self handles: aUrl) ifFalse: [ previous proxyAuthorizationHeaderValueToUrl: aUrl ]
+	(self handles: aUrl) ifTrue: [ ^ nil ].
+	^ previous proxyAuthorizationHeaderValueToUrl: aUrl
 ]
 
 { #category : 'proxy' }
