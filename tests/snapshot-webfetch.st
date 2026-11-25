@@ -28,12 +28,8 @@ names := #( response get wait waitTimeout stream whenDone ).
 			[ results at: name put: ([ block value. 'nothing' ] on: Error do: [ :error | error class name asString ]) ] fork ].
 		wait value: #response value: [ (fetch request: base , '/hang?snap1') start response ].
 		wait value: #get value: [ fetch get: base , '/hang?snap2' ].
-		wait value: #wait value: [ (fetch request: base , '/hang?snap3') start wait; error; response ].
-		wait value: #waitTimeout value: [
-			| waiting |
-			waiting := (fetch request: base , '/hang?snap4') start.
-			waiting waitTimeout: 100 seconds.
-			waiting response ].
+		wait value: #wait value: [ (fetch request: base , '/hang?snap3') start wait ].
+		wait value: #waitTimeout value: [ (fetch request: base , '/hang?snap4') start waitTimeout: 100 seconds ].
 		wait value: #stream value: [ (fetch request: base , '/endless?snap5') stream: [ :stream | [ stream next: 1000 ] repeat ] ].
 		(fetch request: base , '/hang?snap6') start
 			whenDone: [ :response | results at: #whenDone put: 'nothing' ]
