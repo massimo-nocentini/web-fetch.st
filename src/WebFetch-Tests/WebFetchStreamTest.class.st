@@ -139,3 +139,19 @@ WebFetchStreamTest >> testThreeMiBStreamAndBackpressure [
 	self assert: received equals: source.
 	self assert: host maxBufferedBytes <= (WebFetchCall defaultStreamWindow + 65536)
 ]
+
+{ #category : 'tests' }
+WebFetchStreamTest >> testTerminateReaderAborts [
+	"A reader outside stream:, whose ensure: closes the call too"
+
+	| call process |
+	host enqueuePending.
+	call := (WebFetch request: 'http://example.test/rd') startWithWindow: 100.
+	host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://example.test/rd' type: 'basic' redirected: false headers: #( ).
+	process := [ (WebFetchBodyStream on: call response: call waitForHead) next ] fork.
+	[
+		(Delay forMilliseconds: 30) wait.
+		self assert: host openCount equals: 1.
+		process terminate.
+		self assert: (self waitUntil: [ host openCount = 0 ]) ] ensure: [ call abort ]
+]

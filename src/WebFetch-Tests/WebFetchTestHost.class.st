@@ -16,6 +16,7 @@ Class {
 		'open',
 		'requests',
 		'closedCount',
+		'hostCalls',
 		'maxBufferedBytes',
 		'scriptQueue',
 		'requestHandler',
@@ -51,6 +52,7 @@ WebFetchTestHost >> availability: anInteger [
 { #category : 'host protocol' }
 WebFetchTestHost >> close: handle [
 	| entry |
+	mutex critical: [ hostCalls := hostCalls + 1 ].
 	handle isInteger ifFalse: [ ^ false ].
 	entry := mutex critical: [ open removeKey: handle ifAbsent: [ nil ] ].
 	entry ifNil: [ ^ false ].
@@ -233,6 +235,7 @@ WebFetchTestHost >> finish: id [
 
 { #category : 'host protocol' }
 WebFetchTestHost >> headOf: handle [
+	mutex critical: [ hostCalls := hostCalls + 1 ].
 	handle isInteger ifFalse: [ PrimitiveFailed signal: 'primitiveFetchHead: bad argument' ].
 	^ mutex critical: [
 		| entry |
@@ -241,6 +244,11 @@ WebFetchTestHost >> headOf: handle [
 		(entry at: #state) = 1
 			ifTrue: [ nil ]
 			ifFalse: [ (entry at: #head) copy ] ]
+]
+
+{ #category : 'inspection' }
+WebFetchTestHost >> hostCalls [
+	^ mutex critical: [ hostCalls ]
 ]
 
 { #category : 'initialization' }
@@ -408,6 +416,7 @@ WebFetchTestHost >> pushBytes: aByteArray for: id [
 { #category : 'host protocol' }
 WebFetchTestHost >> read: handle into: aByteArray startingAt: startIndex count: count [
 	| hook copied |
+	mutex critical: [ hostCalls := hostCalls + 1 ].
 	handle isInteger ifFalse: [ PrimitiveFailed signal: 'primitiveFetchRead: bad argument' ].
 	(aByteArray isKindOf: ByteArray) ifFalse: [ PrimitiveFailed signal: 'primitiveFetchRead: bad argument' ].
 	aByteArray isReadOnlyObject ifTrue: [ PrimitiveFailed signal: 'primitiveFetchRead: no modification' ].
@@ -460,6 +469,7 @@ WebFetchTestHost >> reset [
 		open := Dictionary new.
 		requests := OrderedCollection new.
 		closedCount := 0.
+		hostCalls := 0.
 		maxBufferedBytes := 0.
 		scriptQueue := OrderedCollection new.
 		requestHandler := nil.
@@ -481,7 +491,9 @@ WebFetchTestHost >> signalSemaphoreIndex: semIndex [
 { #category : 'host protocol' }
 WebFetchTestHost >> startSemaphore: semIndex head: headBytes body: bodyBytesOrNil window: windowBytes timeout: timeoutMs flags: flags [
 	| table parsed reqRecord id entry script handler hook |
-	hook := mutex critical: [ startHook ].
+	hook := mutex critical: [
+		hostCalls := hostCalls + 1.
+		startHook ].
 	hook ifNotNil: [ hook value ].
 	availability = 0 ifTrue: [ WebFetchUnavailable signal: 'WebFetch is not available' ].
 	availability = 2 ifTrue: [ WebFetchNetworkOff signal: 'Network access is off' ].
@@ -548,6 +560,7 @@ WebFetchTestHost >> startSemaphore: semIndex head: headBytes body: bodyBytesOrNi
 { #category : 'host protocol' }
 WebFetchTestHost >> stateOf: handle [
 	| hook |
+	mutex critical: [ hostCalls := hostCalls + 1 ].
 	handle isInteger ifFalse: [ PrimitiveFailed signal: 'primitiveFetchState: bad argument' ].
 	hook := mutex critical: [ stateHook ].
 	hook ifNotNil: [ hook cull: handle ].

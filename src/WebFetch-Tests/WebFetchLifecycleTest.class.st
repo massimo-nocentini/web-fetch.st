@@ -32,6 +32,7 @@ WebFetchLifecycleTest >> testAbortAll [
 	self assert: host openCount equals: 0.
 	self assert: WebFetchCall openCount equals: 0.
 	calls do: [ :c |
+		self deny: ((WebFetchCall classPool at: #OpenCalls) includes: c).
 		self assert: c isClosed.
 		self should: [ c response ] raise: WebFetchAborted ]
 ]

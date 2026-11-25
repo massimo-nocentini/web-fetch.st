@@ -32,15 +32,10 @@ WebFetchZincLiveTest >> client: aPath [
 ]
 
 { #category : 'helpers' }
-WebFetchZincLiveTest >> requests [
-	"Answer those that the server saw"
-
-	^ (STONJSON fromString: (WebFetch get: self baseUrl , '/_stats') contents) at: 'requests'
-]
-
-{ #category : 'helpers' }
 WebFetchZincLiveTest >> requestsWith: aTag [
-	^ self requests select: [ :each | (each at: 'url') includesSubstring: aTag ]
+	"Answer those that the server saw with aTag in their URL"
+
+	^ (STONJSON fromString: (WebFetch get: self baseUrl , '/_stats?tag=' , aTag) contents) at: 'requests'
 ]
 
 { #category : 'running' }
@@ -185,13 +180,14 @@ WebFetchZincLiveTest >> testRedirect [
 
 { #category : 'tests' }
 WebFetchZincLiveTest >> testRetry [
-	"/flaky closes the connection while it was asked at most fail times"
+	"/flaky closes the connection the first two times that it is asked with a key"
 
-	| asked |
-	asked := (self requests select: [ :each | (each at: 'path') = '/flaky' ]) size.
+	| tag |
+	tag := self tag.
 	self
-		assert: ((self client: '/flaky?fail=' , (asked + 2) asString) numberOfRetries: 2; retryDelay: 0; get)
-		equals: 'flaky ok'
+		assert: ((self client: '/flaky?fail=2&key=' , tag) numberOfRetries: 2; retryDelay: 0; get)
+		equals: 'flaky ok'.
+	self assert: (self requestsWith: tag) size >= 3
 ]
 
 { #category : 'tests' }

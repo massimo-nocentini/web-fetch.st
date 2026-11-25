@@ -52,15 +52,15 @@ WebFetchLiveTest >> baseUrl [
 { #category : 'helpers' }
 WebFetchLiveTest >> closedCountForTag: tag [
 	| stats |
-	stats := self fetchStats.
+	stats := self fetchStatsForTag: tag.
 	^ ((stats at: 'requests') select: [ :each |
 		((each at: 'url') includesSubstring: tag) and: [ each at: 'closed' ] ]) size
 ]
 
 { #category : 'helpers' }
-WebFetchLiveTest >> fetchStats [
+WebFetchLiveTest >> fetchStatsForTag: tag [
 	| resp |
-	resp := WebFetch get: self baseUrl , '/_stats'.
+	resp := WebFetch get: self baseUrl , '/_stats?tag=' , tag.
 	^ STONJSON fromString: resp contents
 ]
 
@@ -74,6 +74,14 @@ WebFetchLiveTest >> registeredSemaphoreCount [
 ]
 
 { #category : 'helpers' }
+WebFetchLiveTest >> seenCountForTag: tag [
+	| stats |
+	stats := self fetchStatsForTag: tag.
+	^ ((stats at: 'requests') select: [ :each |
+		(each at: 'url') includesSubstring: tag ]) size
+]
+
+{ #category : 'helpers' }
 WebFetchLiveTest >> verifyPatternBytes: bytes [
 	1 to: bytes size do: [ :i |
 		(bytes at: i) = ((i - 1) bitAnd: 255) ifFalse: [
@@ -82,11 +90,14 @@ WebFetchLiveTest >> verifyPatternBytes: bytes [
 
 { #category : 'helpers' }
 WebFetchLiveTest >> waitUntilClosedCountForTag: tag atLeast: expected [
-	| deadline |
+	| deadline count |
 	deadline := Time millisecondClockValue + 3000.
-	[ (self closedCountForTag: tag) < expected and: [ Time millisecondClockValue < deadline ] ]
+	[
+		count := self closedCountForTag: tag.
+		count < expected and: [ Time millisecondClockValue < deadline ] ]
 		whileTrue: [ (Delay forMilliseconds: 30) wait ].
-	self assert: (self closedCountForTag: tag) >= expected
+	count < expected ifTrue: [ count := self closedCountForTag: tag ].
+	self assert: count >= expected
 ]
 
 { #category : 'helpers' }
@@ -94,10 +105,10 @@ WebFetchLiveTest >> waitUntilSeenCountForTag: tag atLeast: expected [
 	| deadline count |
 	deadline := Time millisecondClockValue + 3000.
 	[
-		count := ((self fetchStats at: 'requests') select: [ :each |
-			(each at: 'url') includesSubstring: tag ]) size.
+		count := self seenCountForTag: tag.
 		count < expected and: [ Time millisecondClockValue < deadline ] ]
 		whileTrue: [ (Delay forMilliseconds: 30) wait ].
+	count < expected ifTrue: [ count := self seenCountForTag: tag ].
 	self assert: count >= expected
 ]
 
@@ -261,7 +272,7 @@ WebFetchLiveTest >> testGzipHeadStatus204HeadersEchoNocorsAndRedirect [
 	self assert: resp status equals: 200.
 	self assert: resp contents equals: 'hello'.
 	self assert: (resp headerAt: 'X-A' ifAbsent: [ nil ]) equals: 'café'.
-	stats := self fetchStats.
+	stats := self fetchStatsForTag: tag.
 	seen := (stats at: 'requests') detect: [ :each |
 		((each at: 'url') includesSubstring: tag) and: [ (each at: 'preflight') not ] ].
 	self assert: ((seen at: 'headers') at: 'x-test') equals: 'val-1'.
