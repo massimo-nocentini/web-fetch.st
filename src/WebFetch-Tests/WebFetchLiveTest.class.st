@@ -361,15 +361,24 @@ WebFetchLiveTest >> testTimeoutTruncatedAndWhenDone [
 
 { #category : 'tests' }
 WebFetchLiveTest >> testTooLargeClosesServer [
-	| base tag |
+	| base tag tagBig |
 	base := self baseUrl.
 	self
 		should: [ (WebFetch request: base , '/n?n=5242880') maximumBodySize: 1000; fetch ]
+		raise: WebFetchTooLarge.
+	self
+		should: [ (WebFetch request: base , '/n?n=1000001') maximumBodySize: 1000000; timeout: 10 seconds; fetch ]
 		raise: WebFetchTooLarge.
 
 	tag := 'tag-large-' , Time millisecondClockValue asString.
 	self
 		should: [ (WebFetch request: base , '/endless?' , tag) maximumBodySize: 1000; fetch ]
 		raise: WebFetchTooLarge.
-	self waitUntilClosedCountForTag: tag atLeast: 1
+	self waitUntilClosedCountForTag: tag atLeast: 1.
+
+	tagBig := 'tag-large-1m-' , Time millisecondClockValue asString.
+	self
+		should: [ (WebFetch request: base , '/endless?' , tagBig) maximumBodySize: 1000000; timeout: 10 seconds; fetch ]
+		raise: WebFetchTooLarge.
+	self waitUntilClosedCountForTag: tagBig atLeast: 1
 ]

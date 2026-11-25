@@ -374,6 +374,7 @@ WebFetchTestHost >> pumpBodyFor: id [
 			(entry at: #buffer) add: slice.
 			buffered = 0 ifTrue: [ shouldSignal := true ].
 			buffered := buffered + take.
+			buffered >= window ifTrue: [ shouldSignal := true ].
 			buffered > maxBufferedBytes ifTrue: [ maxBufferedBytes := buffered ].
 			at := at + take ].
 		entry at: #remainingAt put: at.
@@ -399,7 +400,7 @@ WebFetchTestHost >> pushBytes: aByteArray for: id [
 		next := prev + aByteArray size.
 		entry at: #bufferedSize put: next.
 		next > maxBufferedBytes ifTrue: [ maxBufferedBytes := next ].
-		shouldSignal := prev = 0.
+		shouldSignal := prev = 0 or: [ next >= (entry at: #window) ].
 		semIndex := entry at: #semIndex ].
 	shouldSignal ifTrue: [ self signalSemaphoreIndex: semIndex ]
 ]

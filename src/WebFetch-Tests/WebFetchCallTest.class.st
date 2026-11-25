@@ -62,6 +62,31 @@ WebFetchCallTest >> testBodySizesZeroOneExactAndTooLarge [
 ]
 
 { #category : 'tests' }
+WebFetchCallTest >> testTooLargeAcrossMultipleChunksWakesWaiter [
+	| call started done gotTooLarge id |
+	host enqueuePending.
+	call := (WebFetch request: 'http://example.test/multi-big')
+		maximumBodySize: 10;
+		start.
+	id := host lastId.
+	started := Semaphore new.
+	done := Semaphore new.
+	gotTooLarge := false.
+	[
+		started signal.
+		[ call response ] on: WebFetchTooLarge do: [ :e | gotTooLarge := true ].
+		done signal ] fork.
+	self deny: (started waitTimeoutMilliseconds: 2000).
+	Processor yield.
+	host deliverHeadFor: id status: 200 reason: 'OK' url: 'http://example.test/multi-big' type: 'basic' redirected: false headers: #().
+	host pushBytes: (ByteArray new: 6 withAll: 1) for: id.
+	(Delay forMilliseconds: 20) wait.
+	host pushBytes: (ByteArray new: 6 withAll: 2) for: id.
+	self deny: (done waitTimeoutMilliseconds: 1000).
+	self assert: gotTooLarge
+]
+
+{ #category : 'tests' }
 WebFetchCallTest >> testCloseOfCallBeingRead [
 	| call buf |
 	host enqueueStatus: 200 headers: #() body: 'abcdefgh' chunkSize: 4.
