@@ -292,6 +292,11 @@ WebFetchZincClientTest >> testNoReuse [
 { #category : 'tests' }
 WebFetchZincClientTest >> testPartialRequestIsNotSent [
 	#( 'POST /x HTTP/1.1
+Transfer-Encoding: chunked
+
+2
+ab
+' 'POST /x HTTP/1.1
 Content-Length: 5
 
 abc' 'POST /x HTTP/1.1
@@ -309,6 +314,28 @@ no header
 		self deny: stream isConnected.
 		stream close ].
 	self assert: host requests isEmpty
+]
+
+{ #category : 'tests' }
+WebFetchZincClientTest >> testPolling [
+	"Asking for data starts a whole request, and leaves a half written one"
+
+	| stream |
+	self enqueue: 'x'.
+	stream := self requestOf: 'POST /x HTTP/1.1
+Content-Length: 3
+
+a' withUnixLineEndings.
+	self deny: stream isDataAvailable.
+	self deny: stream atEnd.
+	self assert: host requests isEmpty.
+	stream nextPutAll: #[ 98 99 ]; flush.
+	self assert: (self waitUntil: [ stream isDataAvailable ]).
+	self assert: (host lastRequest at: #body) equals: 'abc' asByteArray.
+	self assert: (stream next: 8) equals: 'HTTP/1.1' asByteArray.
+	stream close.
+	self deny: stream isDataAvailable.
+	self assert: stream atEnd
 ]
 
 { #category : 'tests' }

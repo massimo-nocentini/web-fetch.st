@@ -35,6 +35,9 @@ WebFetchSocketStream >> bodyOf: rest headers: headers [
 	| length |
 	(headers anySatisfy: [ :each |
 		each key = 'transfer-encoding' and: [ each value asLowercase = 'chunked' ] ]) ifTrue: [
+			"ZnChunkedReadStream does not see that the last chunk is missing"
+			(rest endsWith: self lastChunk) ifFalse: [
+				WebFetchBadRequest signal: 'The body has no last chunk' ].
 			^ (ZnChunkedReadStream on: rest readStream) upToEnd ].
 	length := headers detect: [ :each | each key = 'content-length' ] ifNone: [ ^ rest ].
 	length value = rest size asString ifFalse: [
@@ -139,6 +142,11 @@ WebFetchSocketStream >> isReady [
 	^ false
 ]
 
+{ #category : 'private' }
+WebFetchSocketStream >> lastChunk [
+	^ ('0' , String crlf , String crlf) asByteArray
+]
+
 { #category : 'private - answer' }
 WebFetchSocketStream >> latin1: aString [
 	"Answer the bytes of aString"
@@ -178,7 +186,7 @@ WebFetchSocketStream >> makeHead [
 
 { #category : 'private - answer' }
 WebFetchSocketStream >> makeLastChunk [
-	segment := ('0' , String crlf , String crlf) asByteArray readStream.
+	segment := self lastChunk readStream.
 	isComplete := true.
 	call close
 ]
@@ -274,9 +282,11 @@ WebFetchSocketStream >> socketIsConnected [
 
 { #category : 'private - socket' }
 WebFetchSocketStream >> socketIsDataAvailable [
-	"Before the first read the request may be half written: ZnUtils asks for atEnd between the parts of an upload"
+	"Before the first read the request may be half written: then it does not start"
 
-	call ifNil: [ ^ false ].
+	call ifNil: [
+		isEnded ifTrue: [ ^ false ].
+		[ self requestFrom: outgoing contents readStream ] on: WebFetchBadRequest do: [ ^ false ] ].
 	^ self fetchDo: [ self isReady ]
 ]
 
@@ -333,10 +343,10 @@ WebFetchSocketStream >> sslSession [
 
 { #category : 'private - request' }
 WebFetchSocketStream >> startCall [
-	| written |
-	written := outgoing contents readStream.
+	| request |
+	request := self requestFrom: outgoing contents readStream.
 	outgoing := nil.
-	call := (self requestFrom: written) startWithWindow: WebFetchCall defaultStreamWindow
+	call := request startWithWindow: WebFetchCall defaultStreamWindow
 ]
 
 { #category : 'private' }
