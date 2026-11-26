@@ -182,7 +182,7 @@ WebFetchWebSocket class >> openCount [
 
 { #category : 'accessing' }
 WebFetchWebSocket class >> openSockets [
-	"Answer an Array of the sockets that have a host record (started and not settled)"
+	"Answer an Array of the sockets that have a host record (started and not settled). A dropped socket that the finalizer released stays in the set until the next garbage collection, and is not answered"
 
 	| mutex |
 	mutex := OpenSocketsMutex.
@@ -190,7 +190,7 @@ WebFetchWebSocket class >> openSockets [
 	^ mutex critical: [
 		Array streamContents: [ :stream |
 			OpenSockets do: [ :each |
-				each ifNotNil: [ each isSettled ifFalse: [ stream nextPut: each ] ] ] ] ]
+				each ifNotNil: [ each hasHostRecord ifTrue: [ stream nextPut: each ] ] ] ] ]
 ]
 
 { #category : 'private' }
@@ -492,6 +492,13 @@ WebFetchWebSocket >> initialize [
 	maximumQueuedBytes := self class defaultMaximumQueuedBytes
 ]
 
+{ #category : 'private' }
+WebFetchWebSocket >> hasHostRecord [
+	"Whether the host has a record of the socket: started, not settled, and not released by the finalizer"
+
+	^ settled not and: [ closer notNil and: [ closer handle notNil ] ]
+]
+
 { #category : 'testing' }
 WebFetchWebSocket >> isOpen [
 	^ self state == #open
@@ -504,13 +511,6 @@ WebFetchWebSocket >> isOver [
 	| s |
 	s := self state.
 	^ s == #closed or: [ s == #failed ]
-]
-
-{ #category : 'private' }
-WebFetchWebSocket >> isSettled [
-	"Whether the socket has no host record any more"
-
-	^ settled
 ]
 
 { #category : 'private' }
