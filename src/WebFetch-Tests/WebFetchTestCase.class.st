@@ -1,5 +1,5 @@
 "
-I am the base SUnit test case for `WebFetch-Tests`. I install a fresh `WebFetchTestHost` as `WebFetchHost default` in `setUp`, restore the previous host in `tearDown`, and verify that no request remains open in the host or in `WebFetchCall`.
+I am the base SUnit test case for `WebFetch-Tests`. I install a fresh `WebFetchTestHost` as `WebFetchHost default` in `setUp`, restore the previous host in `tearDown`, and verify that no request remains open in the host or in `WebFetchCall`, and no source in `WebFetchEventSource`.
 "
 Class {
 	#name : 'WebFetchTestCase',
@@ -45,14 +45,17 @@ WebFetchTestCase >> setUp [
 
 { #category : 'running' }
 WebFetchTestCase >> tearDown [
-	| leakedHost leakedCalls |
+	| leakedHost leakedCalls leakedSources |
 	leakedHost := host openCount.
 	leakedCalls := WebFetchCall openCount.
+	leakedSources := WebFetchEventSource openCount.
 	[
+		WebFetchEventSource closeAll.
 		WebFetchCall abortAll.
 		WebFetchHost default: previousHost ] ensure: [ super tearDown ].
 	self assert: leakedHost equals: 0.
-	self assert: leakedCalls equals: 0
+	self assert: leakedCalls equals: 0.
+	self assert: leakedSources equals: 0
 ]
 
 { #category : 'helpers' }

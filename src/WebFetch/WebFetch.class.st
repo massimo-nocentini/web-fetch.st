@@ -21,8 +21,9 @@ Class {
 
 { #category : 'control' }
 WebFetch class >> abortAll [
-	"Abort all in-progress WebFetch calls"
+	"Close every event source, then abort all in-progress WebFetch calls"
 
+	WebFetchEventSource closeAll.
 	WebFetchCall abortAll
 ]
 

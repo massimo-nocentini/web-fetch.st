@@ -9,6 +9,8 @@ Each connection is one streaming call (1 MiB window), with `Accept: text/event-s
 
 `next` answers the next event, waiting through reconnections, or nil once I am closed (by `close`, or a clean end without reconnection), and signals my terminal error; `nextTimeout:` answers nil when the time passes; `do:` reads them all and closes me. One process reads; `close` comes from any process. A wait that is curtailed (Stop, `terminate`, an unwinding) closes me and aborts my request. `lastEventId` is the id of the last event delivered: a new source given it resumes where the code stopped.
 
+`start` forks a reader instead, for tools and the UI: a process at the priority of the caller that gives each connection opened to `onOpen:`, each event to `onEvent:`, each interruption to `onReconnect:` (nil at the end of a body, else the transient error) and the terminal error to `onError:`, then ends; terminating it closes me. The blocks run in that process, not deferred to the UI: a slow block slows the reading, and a block that updates a morph defers to the UI itself (`UIManager default defer:`). A started source survives Stop of the Console and the Notebook; `openSources` lists the sources from their first connection to their close, and `closeAll` or `WebFetch abortAll` closes them. A source never goes on after the image resumed: it fails with `WebFetchSessionEnded`.
+
 Settings, set before the first connection: `reconnectDelay:`, `minimumReconnectDelay:`, `maximumReconnectDelay:` (Durations, or Numbers of seconds), `reconnects:`, `retriesFirstConnection:`, `connectTimeout:`, `idleTimeout:`, `maximumEventSize:`, `lastEventId:`.
 "
 Class {
@@ -45,15 +47,29 @@ Class {
 		'retriesFirstConnection',
 		'connectTimeout',
 		'idleTimeout',
-		'process'
+		'pulled',
+		'process',
+		'onOpen',
+		'onEvent',
+		'onReconnect',
+		'onError'
 	],
 	#classVars : [
-		'NoStoreRefusedBy'
+		'NoStoreRefusedBy',
+		'OpenSources',
+		'OpenSourcesMutex'
 	],
 	#category : 'WebFetch-Core',
 	#package : 'WebFetch',
 	#tag : 'Core'
 }
+
+{ #category : 'control' }
+WebFetchEventSource class >> closeAll [
+	"Close every open source, outside the mutex of the open sources"
+
+	self openSources do: [ :each | each close ]
+]
 
 { #category : 'constants' }
 WebFetchEventSource class >> defaultMaximumEventSize [
@@ -77,6 +93,30 @@ WebFetchEventSource class >> defaultReconnectDelay [
 	^ 3 seconds
 ]
 
+{ #category : 'class initialization' }
+WebFetchEventSource class >> initialize [
+	self resetOpenSources.
+	SessionManager default registerNetworkClassNamed: self name
+]
+
+{ #category : 'accessing' }
+WebFetchEventSource class >> openCount [
+	^ self openSources size
+]
+
+{ #category : 'accessing' }
+WebFetchEventSource class >> openSources [
+	"Answer a snapshot Array of the sources from their first connection to their close"
+
+	| mutex |
+	mutex := OpenSourcesMutex.
+	mutex ifNil: [ ^ #( ) ].
+	^ mutex critical: [
+		Array streamContents: [ :stream |
+			OpenSources do: [ :each |
+				each ifNotNil: [ each isClosed ifFalse: [ stream nextPut: each ] ] ] ] ]
+]
+
 { #category : 'constants' }
 WebFetchEventSource class >> refusedBodyLimit [
 	"The most bytes kept of the body of a refused answer"
@@ -91,6 +131,11 @@ WebFetchEventSource class >> refusedBodyTime [
 	^ 5 seconds
 ]
 
+{ #category : 'private' }
+WebFetchEventSource class >> register: aSource [
+	OpenSourcesMutex critical: [ OpenSources add: aSource ]
+]
+
 { #category : 'instance creation' }
 WebFetchEventSource class >> request: aWebFetchRequest [
 	"A source of a copy of aWebFetchRequest, not yet connected. A Last-Event-ID header of it is the initial lastEventId, and its timeout the connectTimeout"
@@ -98,6 +143,38 @@ WebFetchEventSource class >> request: aWebFetchRequest [
 	^ self new
 		setRequest: aWebFetchRequest;
 		yourself
+]
+
+{ #category : 'private' }
+WebFetchEventSource class >> resetOpenSources [
+	OpenSources := WeakSet new.
+	OpenSourcesMutex := Mutex new
+]
+
+{ #category : 'system startup' }
+WebFetchEventSource class >> startUp: resuming [
+	"On image resume, a fresh set of open sources without taking the old mutex; each old source is marked ended, without closing its call or its stream"
+
+	| old |
+	resuming ifFalse: [ ^ self ].
+	old := OpenSources.
+	self resetOpenSources.
+	NoStoreRefusedBy := nil.
+	old ifNotNil: [
+		old do: [ :each | each ifNotNil: [ each markSessionEnded ] ] ]
+]
+
+{ #category : 'class initialization' }
+WebFetchEventSource class >> unload [
+	SessionManager default unregisterClassNamed: self name
+]
+
+{ #category : 'private' }
+WebFetchEventSource class >> unregister: aSource [
+	| mutex |
+	mutex := OpenSourcesMutex.
+	mutex ifNil: [ ^ self ].
+	mutex critical: [ OpenSources remove: aSource ifAbsent: [ ] ]
 ]
 
 { #category : 'private' }
@@ -162,7 +239,8 @@ WebFetchEventSource >> close [
 		closing := call.
 		readyState := #closed ].
 	closing ifNotNil: [ closing close ].
-	wakeup signal
+	wakeup signal.
+	self class unregister: self
 ]
 
 { #category : 'private' }
@@ -172,6 +250,7 @@ WebFetchEventSource >> closeCleanly [
 	self dropConnection.
 	mutex critical: [ readyState := #closed ].
 	reconnectAt := nil.
+	self class unregister: self.
 	^ #again
 ]
 
@@ -201,7 +280,9 @@ WebFetchEventSource >> connectBefore: deadline [
 	"Start a connection"
 
 	| copy refused |
-	session ifNil: [ session := Smalltalk session ].
+	session ifNil: [
+		session := Smalltalk session.
+		self class register: self ].
 	copy := self connectionRequest.
 	refused := nil.
 	[ copy buildForDefaultTimeout: nil ]
@@ -288,8 +369,18 @@ WebFetchEventSource >> do: aBlock [
 
 	| event |
 	self checkReader.
+	pulled := true.
 	session ifNil: [ WebFetchCall checkMayWait: host ].
 	[ [ (event := self next) notNil ] whileTrue: [ aBlock value: event ] ] ensure: [ self close ]
+]
+
+{ #category : 'private' }
+WebFetchEventSource >> dispatch: anItem [
+	"Give an event or a notice of the loop to its block"
+
+	(anItem isKindOf: WebFetchEvent) ifTrue: [ ^ onEvent ifNotNil: [ :block | block cull: anItem ] ].
+	anItem key == #open ifTrue: [ ^ onOpen ifNotNil: [ :block | block cull: anItem value ] ].
+	anItem key == #reconnect ifTrue: [ ^ onReconnect ifNotNil: [ :block | block cull: anItem value ] ]
 ]
 
 { #category : 'private' }
@@ -343,6 +434,7 @@ WebFetchEventSource >> failWith: anError [
 	self dropConnection.
 	mutex critical: [ readyState := #closed ].
 	reconnectAt := nil.
+	self class unregister: self.
 	^ #again
 ]
 
@@ -386,7 +478,8 @@ WebFetchEventSource >> initialize [
 	delay := initialDelay.
 	minimumDelay := self class defaultMinimumReconnectDelay asMilliSeconds.
 	maximumDelay := self class defaultMaximumReconnectDelay asMilliSeconds.
-	retriesFirstConnection := false
+	retriesFirstConnection := false.
+	pulled := false
 ]
 
 { #category : 'testing' }
@@ -516,6 +609,7 @@ WebFetchEventSource >> next [
 
 	| item |
 	self checkReader.
+	pulled := true.
 	session ifNil: [ WebFetchCall checkMayWait: host ].
 	[
 		item := self nextItemBefore: nil.
@@ -541,6 +635,7 @@ WebFetchEventSource >> nextTimeout: aDurationOrSeconds [
 
 	| ms deadline item |
 	self checkReader.
+	pulled := true.
 	ms := self milliseconds: aDurationOrSeconds of: 'nextTimeout:'.
 	(ms > 0 and: [ session isNil ]) ifTrue: [ WebFetchCall checkMayWait: host ].
 	deadline := Time millisecondClockValue + ms.
@@ -550,12 +645,41 @@ WebFetchEventSource >> nextTimeout: aDurationOrSeconds [
 	^ item
 ]
 
+{ #category : 'reader' }
+WebFetchEventSource >> onError: aBlock [
+	"The forked reader evaluates aBlock with the terminal error once the source is closed: a WebFetchError, OutOfMemory, or another Error of the source's loop. Not after close"
+
+	onError := aBlock
+]
+
+{ #category : 'reader' }
+WebFetchEventSource >> onEvent: aBlock [
+	"The forked reader evaluates aBlock with each WebFetchEvent"
+
+	onEvent := aBlock
+]
+
+{ #category : 'reader' }
+WebFetchEventSource >> onOpen: aBlock [
+	"The forked reader evaluates aBlock with the WebFetchResponse of each connection that opens on an event stream"
+
+	onOpen := aBlock
+]
+
+{ #category : 'reader' }
+WebFetchEventSource >> onReconnect: aBlock [
+	"The forked reader evaluates aBlock at each interruption, before the reconnection delay: with nil at the end of a body, else with the transient WebFetchError"
+
+	onReconnect := aBlock
+]
+
 { #category : 'connecting' }
 WebFetchEventSource >> open [
 	"Connect and wait until the source is open, through reconnections. Signal the terminal errors"
 
 	| item |
 	self checkReader.
+	pulled := true.
 	session ifNil: [ WebFetchCall checkMayWait: host ].
 	[ readyState == #open or: [ parser hasEvents ] ] whileFalse: [
 		item := self nextItemBefore: nil.
@@ -761,6 +885,25 @@ WebFetchEventSource >> retriesFirstConnection: aBoolean [
 	retriesFirstConnection := aBoolean
 ]
 
+{ #category : 'private' }
+WebFetchEventSource >> runReader [
+	"The loop of the forked reader: the blocks are evaluated here, outside the handlers of the loop. It closes the source when it ends"
+
+	| item failure |
+	[
+		[
+			failure := nil.
+			item := [ self nextItemBefore: nil ]
+				on: Error
+				do: [ :e |
+					failure := e.
+					nil ].
+			item notNil ] whileTrue: [ self dispatch: item ].
+		(failure notNil and: [ closedByClient not ]) ifTrue: [
+			onError ifNotNil: [ :block | block cull: failure ] ] ]
+		ensure: [ self close ]
+]
+
 { #category : 'initialization' }
 WebFetchEventSource >> setRequest: aWebFetchRequest [
 	| copy timeout |
@@ -781,6 +924,20 @@ WebFetchEventSource >> signalEnd [
 	error ifNil: [ ^ nil ].
 	errorSignalled := true.
 	^ error copy signal
+]
+
+{ #category : 'reader' }
+WebFetchEventSource >> start [
+	"Fork the reader, a process at the priority of the caller that connects and gives the events and notices to the blocks of onOpen:, onEvent:, onReconnect: and onError:, and answer it. The process ends when the source closes, and closes it when it is terminated"
+
+	process ifNotNil: [ self error: 'the source is started already' ].
+	pulled ifTrue: [ self error: 'the events of this source are read with next' ].
+	process := [ self runReader ] newProcess.
+	process
+		name: 'WebFetchEventSource ' , self url asString;
+		priority: Processor activePriority.
+	process resume.
+	^ process
 ]
 
 { #category : 'private' }

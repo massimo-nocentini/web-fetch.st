@@ -7,7 +7,8 @@ Class {
 	#name : 'WebFetchEventSourceTest',
 	#superclass : 'WebFetchTestCase',
 	#instVars : [
-		'sources'
+		'sources',
+		'readers'
 	],
 	#category : 'WebFetch-Tests-Tests',
 	#package : 'WebFetch-Tests',
@@ -76,7 +77,8 @@ WebFetchEventSourceTest >> push: aString [
 { #category : 'running' }
 WebFetchEventSourceTest >> setUp [
 	super setUp.
-	sources := OrderedCollection new
+	sources := OrderedCollection new.
+	readers := OrderedCollection new
 ]
 
 { #category : 'helpers' }
@@ -107,11 +109,21 @@ WebFetchEventSourceTest >> startTimes [
 
 { #category : 'running' }
 WebFetchEventSourceTest >> tearDown [
-	| left |
+	| left ended |
 	left := sources reject: [ :each | each isClosed ].
 	sources do: [ :each | each close ].
+	ended := self waitUntil: [ readers allSatisfy: [ :each | each isTerminated ] ].
+	readers do: [ :each | each terminate ].
 	super tearDown.
-	self assert: left isEmpty
+	self assert: left isEmpty.
+	self assert: ended
+]
+
+{ #category : 'helpers' }
+WebFetchEventSourceTest >> start: aSource [
+	"Start the reader of aSource; tearDown waits until it ended"
+
+	^ readers add: aSource start
 ]
 
 { #category : 'tests' }
@@ -1003,4 +1015,249 @@ WebFetchEventSourceTest >> testUtf8LastEventId [
 WebFetchEventSourceTest >> text: lines [
 	^ String streamContents: [ :stream |
 		lines do: [ :each | stream nextPutAll: each; lf ] ]
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testAbortAll [
+	| open waiting results |
+	host enqueuePending.
+	open := self source: 'abort1'.
+	self assert: (open nextTimeout: 0 seconds) isNil.
+	self deliverHead.
+	self assert: (open nextTimeout: 0 seconds) isNil.
+	self eventStream: (self text: #( 'data: a' '' )).
+	waiting := (self source: 'abort2') reconnectDelay: 10 seconds; yourself.
+	self assert: waiting next data equals: 'a'.
+	self assert: (waiting nextTimeout: 0 seconds) isNil.
+	self assert: waiting readyState equals: #connecting.
+	self assert: WebFetchEventSource openCount equals: 2.
+	self assert: (WebFetchEventSource openSources includes: open).
+	self assert: (WebFetchEventSource openSources collect: [ :each | each printString ]) asSet equals: #( 'WebFetchEventSource(#open http://example.test/abort1)' 'WebFetchEventSource(#connecting http://example.test/abort2)' ) asSet.
+	results := OrderedCollection new.
+	{ open. waiting } do: [ :each | [ results add: each next ] fork ].
+	(Delay forMilliseconds: 20) wait.
+	WebFetch abortAll.
+	self assert: (self waitUntil: [ results size = 2 ]).
+	self assert: (results allSatisfy: [ :each | each isNil ]).
+	self assert: WebFetchEventSource openCount equals: 0.
+	self assert: host openCount equals: 0.
+	"WebFetchCall abortAll alone is an abort the source did not ask for"
+	host enqueuePending.
+	open := self source: 'abort3'.
+	self assert: (open nextTimeout: 0 seconds) isNil.
+	self deliverHead.
+	self assert: (open nextTimeout: 0 seconds) isNil.
+	WebFetchCall abortAll.
+	self should: [ open next ] raise: WebFetchAborted.
+	self assert: open isClosed.
+	self assert: WebFetchEventSource openCount equals: 0
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testCloseAllRacesConnects [
+	"30 sources connecting in their own processes while closeAll runs in a loop"
+
+	| group done deadline |
+	group := (1 to: 30) collect: [ :i | self source: 'many' , i printString ].
+	done := 0.
+	group do: [ :each |
+		[
+			each next.
+			done := done + 1 ] fork ].
+	deadline := Time millisecondClockValue + 2000.
+	[ done < 30 and: [ Time millisecondClockValue < deadline ] ] whileTrue: [
+		WebFetchEventSource closeAll.
+		Processor yield ].
+	self assert: done equals: 30.
+	self assert: (group allSatisfy: [ :each | each isClosed ]).
+	self assert: WebFetchEventSource openCount equals: 0.
+	self assert: host openCount equals: 0.
+	self assert: WebFetchCall openCount equals: 0
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testFairness [
+	"A reader that always finds bytes lets a process of its priority run"
+
+	| body total count counter counterProcess first last source ended |
+	total := 104857.
+	body := String new: total * 10.
+	1 to: total do: [ :i |
+		body replaceFrom: i - 1 * 10 + 1 to: i * 10 with: 'data: ab' , String lf , String lf startingAt: 1 ].
+	self eventStream: body.
+	count := 0.
+	counter := 0.
+	counterProcess := [
+		[
+			counter := counter + 1.
+			Processor yield ] repeat ] forkAt: Processor activePriority.
+	source := (self source: 'fair')
+		reconnects: false;
+		onEvent: [ :event |
+			count := count + 1.
+			count = 1 ifTrue: [ first := counter ].
+			count = total ifTrue: [
+				last := counter.
+				ended signal ] ];
+		yourself.
+	"the test process waits once, so that no wake of its own interrupts the reader"
+	ended := Semaphore new.
+	[
+		self start: source.
+		self deny: (ended waitTimeoutMilliseconds: 20000) ] ensure: [ counterProcess terminate ].
+	self assert: count equals: total.
+	self assert: last - first > 10 description: (last - first) printString
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testLoopErrorGoesToOnError [
+	| source errors |
+	host enqueuePending.
+	errors := OrderedCollection new.
+	source := (self source: 'loop')
+		onError: [ :error | errors add: error ];
+		yourself.
+	self start: source.
+	self assert: (self waitUntil: [ host requests size = 1 ]).
+	host onRead: [ PrimitiveFailed signal: 'primitiveFetchRead failed: x' ].
+	self deliverHead.
+	self push: (self text: #( 'data: a' '' )).
+	self assert: (self waitUntil: [ source isClosed ]).
+	self assert: (self waitUntil: [ readers first isTerminated ]).
+	self assert: errors size equals: 1.
+	self assert: (errors first isKindOf: PrimitiveFailed).
+	self assert: source error equals: errors first.
+	self assert: host openCount equals: 0
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testReaderRules [
+	| source |
+	host enqueuePending.
+	source := self source: 'rules'.
+	self start: source.
+	self should: [ source next ] raise: Error withExceptionDo: [ :error | self assert: error messageText equals: 'the events of a started source go to its blocks' ].
+	self should: [ source nextTimeout: 0 seconds ] raise: Error.
+	self should: [ source open ] raise: Error.
+	self should: [ source do: [ :event | ] ] raise: Error.
+	self should: [ source start ] raise: Error withExceptionDo: [ :error | self assert: error messageText equals: 'the source is started already' ].
+	self deny: source isClosed.
+	source close.
+	source := self source: 'rules2'.
+	self assert: (source nextTimeout: 0 seconds) isNil.
+	self should: [ source start ] raise: Error withExceptionDo: [ :error | self assert: error messageText equals: 'the events of this source are read with next' ].
+	self assert: source process isNil.
+	source close
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testSessionEnded [
+	"WebFetchEventSource startUp: true before WebFetchCall startUp: true, then after it"
+
+	#( true false ) do: [ :sourcesFirst |
+		| reading waiting results stale |
+		host enqueuePending.
+		reading := self source: 'resume1'.
+		self assert: (reading nextTimeout: 0 seconds) isNil.
+		self deliverHead.
+		self eventStream: (self text: #( 'data: a' '' )).
+		waiting := (self source: 'resume2') reconnectDelay: 10 seconds; yourself.
+		self assert: waiting next data equals: 'a'.
+		results := OrderedCollection new.
+		{ reading. waiting } do: [ :each |
+			[ results add: ([ each next ] on: WebFetchSessionEnded do: [ :e | e ]) ] fork ].
+		(Delay forMilliseconds: 20) wait.
+		sourcesFirst
+			ifTrue: [
+				WebFetchEventSource startUp: true.
+				WebFetchCall startUp: true ]
+			ifFalse: [
+				WebFetchCall startUp: true.
+				WebFetchEventSource startUp: true ].
+		self assert: (self waitUntil: [ results size = 2 ]).
+		self assert: (results allSatisfy: [ :each | each isKindOf: WebFetchSessionEnded ]).
+		self assert: reading isClosed.
+		self assert: waiting isClosed.
+		self should: [ waiting next ] raise: WebFetchSessionEnded.
+		self assert: WebFetchEventSource openCount equals: 0.
+		self assert: host openCount equals: 0.
+		"a source of another session ends at its next step"
+		self eventStream: (self text: #( 'data: b' '' )).
+		stale := (self source: 'resume3') reconnectDelay: 10 seconds; yourself.
+		self assert: stale next data equals: 'b'.
+		stale session: Object new.
+		self should: [ stale nextTimeout: 0 seconds ] raise: WebFetchSessionEnded.
+		self assert: stale isClosed ].
+	"a new source works"
+	self eventStream: (self text: #( 'data: c' '' )).
+	self assert: ((self source: 'resume4') reconnects: false; next) data equals: 'c'.
+	sources last close
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testStartBlocks [
+	| source log errors |
+	self eventStream: (self text: #( 'data: a' '' 'data: b' '' )).
+	self eventStream: (self text: #( 'data: c' '' )).
+	host enqueueStatus: 204 headers: #( ) body: nil.
+	log := OrderedCollection new.
+	source := (self source: 'blocks')
+		onOpen: [ :response | log add: #open -> response status ];
+		onEvent: [ :event | log add: event data ];
+		onReconnect: [ :reason | log add: #reconnect -> reason ];
+		onError: [ :error | log add: error ];
+		yourself.
+	self assert: (self start: source) name equals: 'WebFetchEventSource http://example.test/blocks'.
+	self assert: source process equals: readers first.
+	self assert: (self waitUntil: [ readers first isTerminated ]).
+	self assert: (log first: 7) asArray equals: { #open -> 200. 'a'. 'b'. #reconnect -> nil. #open -> 200. 'c'. #reconnect -> nil }.
+	self assert: log size equals: 8.
+	self assert: (log last isKindOf: WebFetchBadResponse).
+	self assert: log last response status equals: 204.
+	self assert: source isClosed.
+	"close gives no onError:"
+	host enqueuePending.
+	errors := OrderedCollection new.
+	source := (self source: 'blocks2')
+		onError: [ :error | errors add: error ];
+		yourself.
+	self start: source.
+	self assert: (self waitUntil: [ host openCount = 1 ]).
+	source close.
+	self assert: (self waitUntil: [ readers last isTerminated ]).
+	self assert: errors isEmpty.
+	"terminating the reader closes the source"
+	host enqueuePending.
+	source := self source: 'blocks3'.
+	self start: source.
+	self assert: (self waitUntil: [ host openCount = 1 ]).
+	readers last terminate.
+	self assert: (self waitUntil: [ source isClosed ]).
+	self assert: host openCount equals: 0.
+	"an error of a block is the error of the block"
+	self eventStream: (self text: #( 'data: a' '' )).
+	errors := OrderedCollection new.
+	source := (self source: 'blocks4')
+		onEvent: [ :event | WebFetchBadRequest signal: 'a block' ];
+		onError: [ :error | errors add: error ];
+		yourself.
+	self should: [ source runReader ] raise: WebFetchBadRequest.
+	self assert: errors isEmpty.
+	self assert: source isClosed
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testStartInCallback [
+	| source events |
+	self eventStream: (self text: #( 'data: a' '' 'data: b' '' )).
+	events := OrderedCollection new.
+	source := (self source: 'startcb')
+		reconnects: false;
+		onEvent: [ :event | events add: event data ];
+		yourself.
+	self inCallback: [
+		self start: source.
+		self assert: events isEmpty ].
+	self assert: (self waitUntil: [ source isClosed ]).
+	self assert: events asArray equals: #( 'a' 'b' )
 ]
