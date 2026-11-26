@@ -13,13 +13,32 @@ The work is done by the WebFetchPlugin of the VM of [massimo-nocentini/pharo-vm]
 
 `WebFetch` depends on no package that is not in the image, and changes no class of it; `WebFetch-Zinc` changes no method of Zinc or Zodiac.
 
+## Try it
+
+The site of the VM, <https://massimo-nocentini.github.io/pharo-vm/>, has WebFetch already loaded in the image "Pharo 15 (batteries)", the default of its world page: the packages of the groups `default`, `Zinc` and `ZincTests`, with the Zinc adapter loaded but not installed. In its Console, Notebook or world, evaluate:
+
+```smalltalk
+(WebFetch get: 'https://api.github.com/zen') contents
+```
+
+The Settings dialog of the pages has the switch "Smalltalk code may use the network", on by default. With it off, `WebFetch availability` answers `#off` and requests signal `WebFetchNetworkOff`; git and the WebSockets of the SocketPlugin are refused too.
+
 ## Requirements
 
 - Pharo 12, 13, 14 or 15.
-- A WebAssembly Pharo VM built with `WebFetchPlugin` (Console, Notebook, World or the node VM).
+- A WebAssembly Pharo VM built with `WebFetchPlugin` (Console, Notebook, World or the node VM), from the branch `pharo-12` of [massimo-nocentini/pharo-vm](https://github.com/massimo-nocentini/pharo-vm).
 - On a native VM, the packages load normally; `WebFetch availability` answers `#unavailable` and every request signals `WebFetchUnavailable`. Unit tests run natively using `WebFetchTestHost`.
 
 ## Loading
+
+From GitHub:
+
+```smalltalk
+Metacello new
+	baseline: 'WebFetch';
+	repository: 'github://massimo-nocentini/web-fetch.st:master/src';
+	load: #( 'Core' )
+```
 
 From a local checkout of `web-fetch.st`:
 
@@ -29,6 +48,8 @@ Metacello new
 	repository: 'tonel:///path/to/web-fetch.st/src';
 	load: #( 'Core' )
 ```
+
+In the web pages, the `github://` form does not work: Metacello downloads a zip from `codeload.github.com`, which answers no CORS request. There, use the batteries image, or the `tonel://` form on a clone made with Iceberg.
 
 Groups of `BaselineOfWebFetch`:
 
@@ -186,18 +207,27 @@ Differences from a native socket:
 
 ## Tests
 
-Native unit tests run without a WebAssembly VM using `WebFetchTestHost`. Live tests (`WebFetchLiveTest`) run on a WebAssembly VM against `tests/wasm/lib/fetch-http.mjs` from the VM repository:
+Native unit tests run without a WebAssembly VM using `WebFetchTestHost`. Live tests (`WebFetchLiveTest`) run on a WebAssembly VM against `tests/wasm/lib/fetch-http.mjs` from the VM repository; `build-wasm/node/pharo` is the node VM that `make wasm` builds there:
 
 ```sh
 node /path/to/pharo-vm/tests/wasm/lib/fetch-http.mjs
 # prints http://127.0.0.1:<port>
 WEB_FETCH_SERVER=http://127.0.0.1:<port> \
-pharo --headless Pharo.image --no-default-preferences st --quit tests/run-webfetch.st
+/path/to/pharo-vm/build-wasm/node/pharo --headless Pharo.image --no-default-preferences st --quit tests/run-webfetch.st
 ```
 
 `tests/run-webfetch.st` also reads the server URL from a `webfetch.lane` file in the working directory when `WEB_FETCH_SERVER` is not set. Without a server URL, or off WebAssembly, live tests skip themselves.
 `tests/callback-webfetch.st` makes requests while a real FFI callback runs (the node VM with the FFI).
 `tests/snapshot-webfetch.st`, run twice on one copy of an image, saves it while processes wait for requests and restarts it.
+
+In the VM repository, lane 81 runs all of these, in the node VM and in the web VM, when `WEB_FETCH_DIR` names a checkout of this repository:
+
+```sh
+cd /path/to/pharo-vm
+WEB_FETCH_DIR=/path/to/web-fetch.st sh tests/wasm/run-lanes.sh 81
+```
+
+The CI of the VM clones this repository and does the same on every push, and its batteries job loads it and runs its tests in the native VM.
 
 ## License
 
