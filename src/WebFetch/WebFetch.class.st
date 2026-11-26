@@ -10,6 +10,8 @@ Examples:
 - `WebFetch abortAll`
 
 In the UI process, `get:` and `post:body:type:` freeze the world until they finish or time out (default 60 seconds). Tools should use `(WebFetch request: url) start` with `whenDone:ifError:` and `UIManager default defer:`.
+
+`abortAll` does not touch WebSockets: `WebFetchWebSocket closeAll` (package `WebFetch-WebSocket`) releases them.
 "
 Class {
 	#name : 'WebFetch',

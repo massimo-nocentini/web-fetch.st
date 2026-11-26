@@ -11,23 +11,24 @@ The work is done by the WebFetchPlugin of the VM of [massimo-nocentini/pharo-vm]
 - `WebFetchBodyStream`: binary read stream over a streaming response body.
 - `WebFetchEventSource`: Server-Sent Events (`text/event-stream`), reconnecting, read with `next` or `do:`, or by a forked reader (`start`); its events are `WebFetchEvent`s.
 - `WebFetchZinc`: opt-in `ZnNetworkingUtils` adapter (`WebFetch-Zinc`) that routes `ZnClient`, `ZnEasy` and `asZnUrl retrieveContents` through `WebFetch`.
+- `WebFetchWebSocket`: WebSocket client connections (`WebFetch-WebSocket`) by the `WebSocket` of the browser or of node, through the WebSocketPlugin of the same VM (its `docs/WebSocket.md`): `connect:`, `next`, `sendText:`, `sendBytes:`, `whenMessage:whenClosed:`, `close`.
 
-`WebFetch` depends on no package that is not in the image, and changes no class of it; `WebFetch-Zinc` changes no method of Zinc or Zodiac.
+`WebFetch` and `WebFetch-WebSocket` depend on no package that is not in the image, and change no class of it; `WebFetch-Zinc` changes no method of Zinc or Zodiac.
 
 ## Try it
 
-The site of the VM, <https://massimo-nocentini.github.io/pharo-vm/>, has WebFetch already loaded in the image "Pharo 15 (batteries)", the default of its world page: the packages of the groups `default`, `Zinc` and `ZincTests`, with the Zinc adapter loaded but not installed. In its Console, Notebook or world, evaluate:
+The site of the VM, <https://massimo-nocentini.github.io/pharo-vm/>, has WebFetch already loaded in the image "Pharo 15 (batteries)", the default of its world page: the packages of the groups `default`, `Zinc`, `ZincTests` and `WebSocket`, with the Zinc adapter loaded but not installed. In its Console, Notebook or world, evaluate:
 
 ```smalltalk
 (WebFetch get: 'https://api.github.com/zen') contents
 ```
 
-The Settings dialog of the pages has the switch "Smalltalk code may use the network", on by default. With it off, `WebFetch availability` answers `#off` and requests signal `WebFetchNetworkOff`; git and the WebSockets of the SocketPlugin are refused too.
+The Settings dialog of the pages has the switch "Smalltalk code may use the network", on by default. With it off, `WebFetch availability` answers `#off` and requests signal `WebFetchNetworkOff`, and so do the WebSockets of `WebFetch-WebSocket` (those open fail); git and the WebSockets of the SocketPlugin are refused too. While it is on, the WebSockets of an image talk to their servers with the cookies that the browser holds for them (see WebSocket, Security).
 
 ## Requirements
 
 - Pharo 12, 13, 14 or 15.
-- A WebAssembly Pharo VM built with `WebFetchPlugin` (Console, Notebook, World or the node VM), from the branch `pharo-12` of [massimo-nocentini/pharo-vm](https://github.com/massimo-nocentini/pharo-vm).
+- A WebAssembly Pharo VM built with `WebFetchPlugin` (Console, Notebook, World or the node VM), from the branch `pharo-12` of [massimo-nocentini/pharo-vm](https://github.com/massimo-nocentini/pharo-vm); `WebFetch-WebSocket` needs its `WebSocketPlugin` too, and on a VM without it answers `#unavailable`.
 - On a native VM, the packages load normally; `WebFetch availability` answers `#unavailable` and every request signals `WebFetchUnavailable`. Unit tests run natively using `WebFetchTestHost`.
 
 ## Loading
@@ -58,9 +59,11 @@ Groups of `BaselineOfWebFetch`:
 - `Tests`: `WebFetch-Tests` (includes `WebFetchTestHost`)
 - `Zinc`: `WebFetch-Zinc`
 - `ZincTests`: `WebFetch-Zinc-Tests`
+- `WebSocket`: `WebFetch-WebSocket` (requires `WebFetch`)
+- `WebSocketTests`: `WebFetch-WebSocket-Tests` (includes `WebFetchWebSocketTestHost`)
 - `default`: `Core` and `Tests`
 
-From the command line, `tests/load-webfetch.st` loads the groups named in `WEB_FETCH_GROUPS` (default `'Core Tests Zinc ZincTests'`) from `WEB_FETCH_DIR` and checks for undeclared variables before saving:
+From the command line, `tests/load-webfetch.st` loads the groups named in `WEB_FETCH_GROUPS` (default `'Core Tests Zinc ZincTests'`; `'Core Tests WebSocket WebSocketTests'` for the WebSockets) from `WEB_FETCH_DIR` and checks for undeclared variables before saving:
 
 ```sh
 WEB_FETCH_DIR=/path/to/web-fetch.st \
@@ -271,9 +274,22 @@ Content-Type: application/json
 ...'"
 ```
 
-Its third endpoint, `wss://echo.websocket.org`, is a WebSocket echo, which WebFetch cannot open: it makes HTTP requests only. Nor do the sockets of the WebAssembly VM reach it: Emscripten carries their TCP bytes over WebSockets of its own, for a proxy such as websockify, so a WebSocket client written on `Socket` (such as `ZnWebSocket` of Zinc-WebSocket, which the image does not have) does not work there either.
+Its third endpoint, `wss://echo.websocket.org`, is a WebSocket echo, which `WebFetchWebSocket` opens (in the pages too: WebSockets know no CORS). Its first message says which of its servers answered, then each message comes back as it went:
 
-`WebFetchEchoServerTest` (in `WebFetch-Tests`) checks both HTTP endpoints, the events with `WebFetchEventSource`.
+```smalltalk
+| ws |
+ws := WebFetchWebSocket connect: 'wss://echo.websocket.org'.
+ws next.                  "=> 'Request served by 7811941c69e658'"
+ws sendText: 'ciao, è WebSocket'.
+ws next.                  "=> 'ciao, è WebSocket'"
+ws sendBytes: #[1 2 3].
+ws next.                  "=> #[1 2 3]"
+ws close
+```
+
+The sockets of the WebAssembly VM do not reach it: Emscripten carries their TCP bytes over WebSockets of its own, for a proxy such as websockify, so a WebSocket client written on `Socket` (such as `ZnWebSocket` of Zinc-WebSocket, which the image does not have) does not work there.
+
+`WebFetchEchoServerTest` (in `WebFetch-Tests`) checks both HTTP endpoints, the events with `WebFetchEventSource`; `WebFetchWebSocketEchoServerTest` (in `WebFetch-WebSocket-Tests`) checks the WebSocket one.
 
 ### Errors
 
@@ -289,6 +305,8 @@ All errors inherit from `WebFetchError` and carry a `kind` symbol:
 - `WebFetchInCallback` (`#inCallback`)
 - `WebFetchSessionEnded` (`#sessionEnded`)
 - `WebFetchBadResponse` (`#response`): an answer that is no event stream, for `WebFetchEventSource`
+
+`WebFetch-WebSocket` adds `WebFetchWebSocketClosed` (`#closed`, with `code`, `reason` and `wasClean`) and `WebFetchWebSocketOverflow` (`#overflow`, a `WebFetchTooLarge`).
 
 ## Waiting, Stop, UI process, sessions and callbacks
 
@@ -309,6 +327,67 @@ All errors inherit from `WebFetchError` and carry a `kind` symbol:
 - Event sources: at most `maximumEventSize` bytes of data in an event (1 MiB by default), 4096 bytes for an `id` or an `event`; the reconnection time 3 seconds, at least 250 ms, the backoff up to 60 seconds; a GET reconnects, another method does not. Each connected source holds one of the 64 requests.
 - In a browser, other origins answer only with CORS, at most six requests at a time go to a host over HTTP/1.1 (an open event source is one of them), and Chromium lets simultaneous GETs of one URL wait for one another (its cache), unless their cache mode is `no-store`, as that of event sources is. `Last-Event-ID` costs a preflight to another origin, at each reconnection that sends it.
 - The user can turn the network off (Settings of the pages; `PHARO_WASM_NETWORK=0` in node): `availability` is then `#off`, a start signals `WebFetchNetworkOff`, and the open calls fail with it.
+
+## WebSocket (`WebFetch-WebSocket`)
+
+`WebFetchWebSocket` is a WebSocket client connection made by the `WebSocket` of the host: of the worker in the pages, of node in the node VM. It sends and receives whole messages, text (a String) or binary (a ByteArray), and waits on semaphores as `WebFetch` does, while the VM and the other processes go on. Load the group `WebSocket`; `docs/WebSocket.md` of the VM is the contract.
+
+```smalltalk
+| ws |
+ws := WebFetchWebSocket connect: 'wss://echo.websocket.org'.
+ws next.                  "=> 'Request served by 7811941c69e658'"
+ws sendText: 'ciao, è WebSocket'.
+ws next.                  "=> 'ciao, è WebSocket'"
+ws close.
+```
+
+```smalltalk
+| ws |
+ws := (WebFetchWebSocket url: 'wss://example.org/chat')
+	protocols: #( 'v2.chat' 'v1.chat' );
+	timeout: 10 seconds;
+	maximumMessageSize: 1024 * 1024;
+	maximumQueuedBytes: 8 * 1024 * 1024;
+	start.                 "start does not wait for the handshake"
+ws whenMessage: [ :message | UIManager default defer: [ Transcript crShow: message printString ] ]
+	whenClosed: [ :socket | UIManager default defer: [ Transcript crShow: socket closeCode printString ] ].
+ws waitForOpenTimeout: 10 seconds.
+ws protocol.               "=> 'v2.chat'"
+```
+
+- Class side: `availability` (`#unavailable`, `#ready`, `#off`, independent of `WebFetch availability`) and `isAvailable`; `url:` (a socket to configure, not open), `connect:` and `connect:protocols:` (they wait until it is open, and signal the error of a failed handshake); `openSockets`, `openCount` and `closeAll`, which releases every socket. `WebFetch abortAll` does not touch WebSockets.
+- Configure, before `start`: `protocols:` (tokens of RFC 7230, no two alike ignoring case, at most 32), `timeout:` (the handshake, and a send waiting for the open or for room; 30 seconds by default, nil or `Duration zero` for none), `maximumMessageSize:` and `maximumQueuedBytes:` (16 MiB each by default, 1 to 2^30). A bad value signals `WebFetchBadRequest` when it is set.
+- Open: `start` answers the socket in `#connecting`; `connect` starts it and waits; `waitForOpen` waits with no deadline of its own (the handshake timeout ends it) and signals the error of a socket that failed before it opened; `waitForOpenTimeout:` answers whether it is open, and leaves it as it is.
+- State: `state` (`#new`, `#connecting`, `#open`, `#closing`, `#closed`, `#failed`), `isOpen`, `isOver`, `url`, `protocol`, `extensions`, `bufferedAmount`, `queuedCount`, `closeCode`, `closeReason`, `wasClean`, and `error`, the unsignalled error of a failed socket.
+- Send: `sendText:` (its UTF-8), `sendBytes:`, `send:` (a String as text, anything else as binary). In `#connecting` they wait for the open, on a full send buffer (16 MiB) for room, both within `timeout`, after which they signal `WebFetchTimeout` and the socket stays as it is. On a closing or closed socket they signal `WebFetchWebSocketClosed`, on a failed one its error. `flushTimeout:` waits until every byte sent went to the network, and answers whether it did. A message of more than 64 MiB signals `WebFetchTooLarge`, and the socket stays open.
+- Receive: `next` waits for the next message (in `#connecting` too); when the socket is over and nothing is left it signals `WebFetchWebSocketClosed` (`code`, `reason`, `wasClean`) after a close, the error after a failure. `nextTimeout:` answers nil when none came in time, `nextOrNil` never waits, `nextRaw` answers `{isText. utf8Bytes}`, so that a reader of JSON parses the bytes with no WideString in between. `atEnd` is true when the socket is over and nothing is left. `do:` evaluates a block with each message, ends quietly at any close, clean or not (`closeCode` says why), and signals the error of a failure.
+- `whenMessage:whenClosed:` forks one reader at the caller's priority, named `WebFetchWebSocket reader`, and answers it: the first block gets each message in order, the second the socket at its end, a close, a failure, a session end or a `release` (`socket error` says why when it is not a close). An error in the first block is not caught: that process stops in a debugger, and the socket stays open and fills its queue until it overflows.
+- Close: `close` (1000, no reason) and `close:reason:` (1000 or 3000..4999, a reason of at most 123 bytes of UTF-8, else `WebFetchBadRequest`) answer whether they began the closing handshake; the messages queued stay readable. `waitForCloseTimeout:` answers whether it is over. `release` forgets the socket at once: the host closes it with 1000 `released`, what is queued is lost, and a waiter gets `WebFetchAborted`.
+
+**Ends.** A lost connection is no failure: the socket is `#closed` with 1006, not clean. A failure (`tooLarge`, `overflow`, the network turned off) makes it `#failed`, and closes it with 4009, 4008 or 1000. Either way the messages that came before stay readable: `next` answers them, then signals. When the socket first sees its end, it reads what is queued into the image and frees its host record (one of the 32), so that what it holds survives an image save. A server that never answers a close ends the socket after 5 seconds, 1006 `closing handshake timed out`.
+
+**Waiting, Stop, the UI process, callbacks and sessions.**
+
+- No Mutex is held while a process waits: one reader and one writer, or several of each, wait on their own semaphores, and each gets whole, distinct messages.
+- A curtailed `connect`, `connect:` or `waitForOpen` (Stop, `terminate`, an unwinding) releases the socket, which is not yet the caller's. A curtailed `next`, a send or `flushTimeout:` leaves it open: a connection outlives a reader that was stopped. The process of `whenMessage:whenClosed:` releases nothing when it is terminated.
+- In the UI process of the world, `connect:`, `next` and a send that waits freeze it, as a native socket does; Stop opens a debugger, and the socket stays open. Tools use `start` and `whenMessage:whenClosed:` with `UIManager default defer:`.
+- In an FFI callback a wait signals `WebFetchInCallback` at once; `start`, `state`, `nextOrNil`, a send with room, `close` and `release` work there, also while another process waits in `next`.
+- When a saved image resumes, the sockets that had not ended fail with `WebFetchSessionEnded` and wake their waiters; one that had ended keeps its messages, its close code, its reason and `wasClean`.
+
+**Limits.** 32 sockets per VM, the closing ones counted (`WebFetchTooManyOpen`); 16 MiB per message received and 16 MiB queued unread per socket by default (`WebFetchTooLarge`, `WebFetchWebSocketOverflow`, which close the socket with 4009 and 4008), 256 MiB queued in all the sockets of a VM; 64 MiB per message sent; a send buffer of 16 MiB; a handshake of 30 seconds by default. When the image has no room for a message, the package collects garbage and grows the memory, then gives up that message: the socket fails with `WebFetchTooLarge`, and the earlier messages stay readable. A text message with a character above 255 becomes a WideString, 4 bytes a character: `nextRaw` avoids it.
+
+**Errors.** `WebFetchBadRequest` (a URL that is not an absolute `ws:` or `wss:` one, with a user name, a password, a fragment, or the hostname of the site in a browser; a bad subprotocol, close code or reason), `WebFetchNetworkError` (no connection, a refused handshake, a subprotocol that was not offered), `WebFetchTimeout`, `WebFetchNetworkOff`, `WebFetchAborted`, `WebFetchTooLarge`, `WebFetchWebSocketOverflow`, `WebFetchWebSocketClosed`, `WebFetchUnavailable` (no plugin, or no `WebSocket` in the host), `WebFetchTooManyOpen`, `WebFetchInCallback` and `WebFetchSessionEnded`.
+
+**Security.**
+
+- In a browser the handshake carries the cookies that the browser holds for the server's host (from the site to another site only `SameSite=None` ones, while third-party cookies are allowed), and may carry its HTTP authentication and client certificates: unlike `WebFetch`, there is no way to leave them out. The server sees the `Origin` of the site, so a server that checks `Origin` treats the image as the site; one that authenticates WebSockets by cookies and does not check `Origin` is open to the code of any image, as it is to any page.
+- So a socket to the hostname of the site itself is refused (`WebFetchBadRequest`, `the host of this site is refused: its cookies would be sent`), whatever its port.
+- The image sets no header (no `Authorization`): a token goes in the URL or in a subprotocol, and a URL may end up in the logs of servers.
+- With the network on, the code of an image may talk to any WebSocket server; turn the network off in Settings before running an image that someone else made.
+
+**In a browser.** There is no CORS. A refusal, a name that is not there and a TLS error are the same `WebFetchNetworkError`, without a reason. From an https: page only `wss:` URLs work (but to localhost). The browser makes one handshake at a time per address and port, so many sockets to one server open one after the other, and the timeout of each counts that wait. It answers the pings of the server by itself; the image cannot send one. While the Console prints more than it shows, the worker pauses the VM, and the messages wait in the queue meanwhile, which may overflow.
+
+**In node.** There is no `Origin` and no cookie; node strips a leading BOM of a text message, as Chromium does, and gives no reason for a failed handshake. Node ends after the image ends, also with sockets that a server keeps open.
 
 ## Zinc adapter (`WebFetch-Zinc`)
 
@@ -352,11 +431,22 @@ The tests of event sources need a server with `/sse`, and a VM that knows the ca
 `tests/callback-webfetch.st` makes requests and reads event sources while a real FFI callback runs (the node VM with the FFI).
 `tests/snapshot-webfetch.st`, run twice on one copy of an image, saves it while processes wait for requests and an event source, and restarts it.
 
-In the VM repository, lane 81 runs all of these, in the node VM and in the web VM, when `WEB_FETCH_DIR` names a checkout of this repository:
+The tests of `WebFetch-WebSocket` run natively with the fake host `WebFetchWebSocketTestHost`. `tests/run-websocket.st` runs them on a WebAssembly VM with the live tests (`WebFetchWebSocketLiveTest`), against the WebSocket endpoints of the same server, which prints the port of a second listener that never answers with `--hang-port`:
+
+```sh
+node /path/to/pharo-vm/tests/wasm/lib/fetch-http.mjs --hang-port
+# prints http://127.0.0.1:<port> <hang port>
+WEB_FETCH_SERVER=http://127.0.0.1:<port> WEB_FETCH_HANG_PORT=<hang port> \
+/path/to/pharo-vm/build-wasm/node/pharo --headless Pharo.image --no-default-preferences st --quit tests/run-websocket.st
+```
+
+or from a `websocket.lane` file of the working directory, whose two first words are what the server prints. `WebFetchWebSocketEchoServerTest` goes to `wss://echo.websocket.org` only with `WEB_FETCH_ECHO_SERVER` set, as `WebFetchEchoServerTest`. `tests/callback-websocket.st` waits in a real FFI callback, and `tests/snapshot-websocket.st`, run twice, saves an image while processes wait on sockets and restarts it.
+
+In the VM repository, lane 81 runs all of these, and lane 84 those of the WebSockets, in the node VM and in the web VM, when `WEB_FETCH_DIR` names a checkout of this repository; `websocket.spec.mjs` runs them in Chromium too:
 
 ```sh
 cd /path/to/pharo-vm
-WEB_FETCH_DIR=/path/to/web-fetch.st sh tests/wasm/run-lanes.sh 81
+WEB_FETCH_DIR=/path/to/web-fetch.st sh tests/wasm/run-lanes.sh 81 84
 ```
 
 The CI of the VM clones this repository and does the same on every push, and its batteries job loads it and runs its tests in the native VM.
