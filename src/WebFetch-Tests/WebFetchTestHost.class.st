@@ -2,6 +2,8 @@
 I am a pure-Smalltalk fake host with the same protocol as `WebFetchHost`, for testing `WebFetch` and `WebFetch-Zinc` natively without WebAssembly.
 
 I validate arguments like `WebFetchPlugin`, signal registered semaphores via `Smalltalk specialObjectsArray at: 39`, enforce window backpressure, and never signal inside `startSemaphore:...` (automatic answers are delivered asynchronously by a forked process).
+
+I take the flags 0 to 3 (1 does not follow redirects, 2 is the cache mode no-store) and record them; `maximumFlags: 1` makes me an older VM, which refuses flag 2 with `WebFetchBadRequest`. `enqueueStatus:headers:body:` scripts one connection each, which streaming calls read up to their window; `deliverHeadFor:...` and `pushBytes:for:` push the pieces of an answer by hand.
 "
 Class {
 	#name : 'WebFetchTestHost',

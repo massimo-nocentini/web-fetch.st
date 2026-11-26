@@ -1,7 +1,7 @@
 "
 I am a binary read stream over the body of a streaming `WebFetchCall`.
 
-`response` answers the `WebFetchResponse` (status and headers; `rawContents` is nil). Waiting reads abort the call if curtailed. Closing before EOF drops any buffered bytes, aborts the call, and subsequent reads signal `WebFetchAborted`; closing after EOF leaves `next` answering `nil`.
+`response` answers the `WebFetchResponse` (status and headers; `rawContents` is nil). Waiting reads abort the call if curtailed. `isReadReady` tells whether a read would not wait (bytes, the end, or a failure that the read signals); `waitTimeout:` waits for that at most a time, and answers whether it came (with zero it only tests, also in an FFI callback). Closing before EOF drops any buffered bytes, aborts the call, and subsequent reads signal `WebFetchAborted`; closing after EOF leaves `next` answering `nil`.
 "
 Class {
 	#name : 'WebFetchBodyStream',

@@ -2,6 +2,8 @@
 I describe an HTTP request to be executed by `WebFetch`. I am reusable: starting or fetching me never mutates my state.
 
 Defaults: method `#GET`, `maximumBodySize` 64 MiB (for `fetch` and `start`; it does not bound `stream:` nor `eventSource`), redirects followed, timeout unset (60 seconds for `fetch`/`get:`/`post:body:type:`, none for `start`/`stream:`).
+
+`eventSource` answers a `WebFetchEventSource` that reads Server-Sent Events with a copy of me: any method, headers and body; my `timeout` becomes its `connectTimeout`, and a `Last-Event-ID` header its `lastEventId`.
 "
 Class {
 	#name : 'WebFetchRequest',

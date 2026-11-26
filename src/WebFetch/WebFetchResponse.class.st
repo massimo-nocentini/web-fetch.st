@@ -1,7 +1,7 @@
 "
 I represent an HTTP response returned by `WebFetch`: status code, reason text (may be empty over HTTP/2), final URL, Fetch response type, redirected flag, ordered headers, and optional body bytes.
 
-`contents` decodes textual bodies (text/*, JSON, XML, JavaScript) according to the Content-Type charset (UTF-8 by default, stripping a leading UTF-8 BOM) and falls back to `rawContents` (`ByteArray`) for binary types or undecodable bytes.
+`contents` decodes textual bodies (text/*, JSON, XML, JavaScript) according to the Content-Type charset (UTF-8 by default, stripping a leading UTF-8 BOM) and falls back to `rawContents` (`ByteArray`) for binary types or undecodable bytes. `mediaType` is the essence of the Content-Type, lowercase and without its parameters (empty without one).
 "
 Class {
 	#name : 'WebFetchResponse',
