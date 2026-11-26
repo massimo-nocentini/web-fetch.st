@@ -55,7 +55,7 @@ WebFetchWebSocketEchoServerTest >> tearDown [
 
 { #category : 'tests' }
 WebFetchWebSocketEchoServerTest >> testTextAndBytesComeBack [
-	| ws text bytes |
+	| ws text bytes closed |
 	ws := self connect.
 	text := 'ciao, è WebSocket'.
 	ws sendText: text.
@@ -63,10 +63,13 @@ WebFetchWebSocketEchoServerTest >> testTextAndBytesComeBack [
 	bytes := (0 to: 255) asByteArray.
 	ws sendBytes: bytes.
 	self assert: (ws nextTimeout: 30 seconds) equals: bytes.
+	closed := Time millisecondClockValue.
 	self assert: ws close.
 	self assert: (ws waitForCloseTimeout: 30 seconds).
-	"The server ends TCP about 5 s after the close frames (measured with node 24), and only then does the WebSocket of node tell the close: the close timer of the host, of 5 s, may end the socket first"
-	self assert: ((ws closeCode = 1000 and: [ ws wasClean ])
-		or: [ ws closeCode = 1006 and: [ ws closeReason = 'closing handshake timed out' ] ]).
+	"The server ends TCP about 5.3 s after the close frames (measured with node 24), and only then does the WebSocket of node tell the close: the close timer of the host, of 5 s, may end the socket first, as it ends one of a server that never answers. Then it ended by that timer, not earlier. The clean closes are checked against the server of the lane by WebFetchWebSocketLiveTest"
+	(ws closeCode = 1000 and: [ ws wasClean ]) ifFalse: [
+		self assert: ws closeCode equals: 1006.
+		self assert: ws closeReason equals: 'closing handshake timed out'.
+		self assert: Time millisecondClockValue - closed >= 4900 ].
 	self assert: WebFetchWebSocket openCount equals: 0
 ]

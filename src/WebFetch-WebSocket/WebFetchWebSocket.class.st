@@ -10,7 +10,7 @@ ws next.
 ws close
 ```
 
-- Configure, before `start`: `protocols:`, `timeout:` (of the handshake and of the waits of the sends, 30 seconds by default; nil none), `maximumMessageSize:` and `maximumQueuedBytes:` (16 MiB each by default, at most 2^30).
+- Configure, before `start`: `protocols:`, `timeout:` (of the handshake and of the waits of the sends, 30 seconds by default; nil none), `maximumMessageSize:` and `maximumQueuedBytes:` (16 MiB each by default, at most 256 MiB, what the host queues in all its sockets).
 - Open: `start` (does not wait), `connect` (waits until it is open or failed), `waitForOpen`, `waitForOpenTimeout:`.
 - Send: `sendText:`, `sendBytes:`, `send:`; in `#connecting` they wait for the open, on a full send buffer for room, both within `timeout`; `flushTimeout:`.
 - Receive: `next`, `nextTimeout:`, `nextOrNil`, `nextRaw` (`{isText. utf8Bytes}`), `atEnd`, `do:`, `whenMessage:whenClosed:`.
@@ -151,9 +151,9 @@ WebFetchWebSocket class >> isToken: aString [
 
 { #category : 'constants' }
 WebFetchWebSocket class >> maximumMessageSizeLimit [
-	"The largest maximumMessageSize and maximumQueuedBytes"
+	"The largest maximumMessageSize and maximumQueuedBytes: 256 MiB, the most that the host queues in all its sockets"
 
-	^ 1 bitShift: 30
+	^ 1 bitShift: 28
 ]
 
 { #category : 'constants' }
@@ -562,7 +562,7 @@ WebFetchWebSocket >> maximumMessageSize [
 
 { #category : 'configuring' }
 WebFetchWebSocket >> maximumMessageSize: anInteger [
-	"The largest message that the socket takes (1..2^30); a larger one fails it with tooLarge (WebFetchTooLarge) and the server gets 4009"
+	"The largest message that the socket takes (1..2^28); a larger one fails it with tooLarge (WebFetchTooLarge) and the server gets 4009"
 
 	self checkNotStarted.
 	maximumMessageSize := self validLimit: anInteger named: 'maximumMessageSize'
@@ -575,7 +575,7 @@ WebFetchWebSocket >> maximumQueuedBytes [
 
 { #category : 'configuring' }
 WebFetchWebSocket >> maximumQueuedBytes: anInteger [
-	"The most bytes of messages received and not read (1..2^30); more fail the socket with overflow (WebFetchWebSocketOverflow) and the server gets 4008"
+	"The most bytes of messages received and not read (1..2^28); more fail the socket with overflow (WebFetchWebSocketOverflow) and the server gets 4008"
 
 	self checkNotStarted.
 	maximumQueuedBytes := self validLimit: anInteger named: 'maximumQueuedBytes'
@@ -985,7 +985,7 @@ WebFetchWebSocket >> url [
 { #category : 'private' }
 WebFetchWebSocket >> validLimit: anInteger named: aString [
 	(anInteger isInteger and: [ anInteger between: 1 and: self class maximumMessageSizeLimit ]) ifFalse: [
-		WebFetchBadRequest signal: aString , ' is in 1..2^30, not ' , anInteger printString ].
+		WebFetchBadRequest signal: aString , ' is in 1..2^28, not ' , anInteger printString ].
 	^ anInteger
 ]
 

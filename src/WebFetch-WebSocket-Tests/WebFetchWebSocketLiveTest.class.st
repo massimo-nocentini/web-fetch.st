@@ -94,7 +94,7 @@ WebFetchWebSocketLiveTest >> pattern: size [
 
 { #category : 'helpers' }
 WebFetchWebSocketLiveTest >> serverHost [
-	"The host of the server's URL: in a browser it is not the site's own (a page served from
+	"The host of the server's URL: in a browser it is not of the site's domain (a page served from
 	 127.0.0.1 reaches the server as localhost), which the host refuses"
 
 	^ self httpBase asUrl host

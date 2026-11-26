@@ -437,8 +437,8 @@ WebFetchWebSocketTestHost >> openState: stateIndex read: readIndex write: writeI
 		and: [ indexes asSet size = 3
 		and: [ (self isByteArray: recordBytes)
 		and: [ (recordBytes size between: 1 and: 65536)
-		and: [ (maxMessage isInteger and: [ maxMessage between: 1 and: 1073741824 ])
-		and: [ (maxQueued isInteger and: [ maxQueued between: 1 and: 1073741824 ])
+		and: [ (maxMessage isInteger and: [ maxMessage between: 1 and: 268435456 ])
+		and: [ (maxQueued isInteger and: [ maxQueued between: 1 and: 268435456 ])
 		and: [ timeoutMs isInteger and: [ timeoutMs between: 0 and: 2147483647 ] ] ] ] ] ] ])
 		ifFalse: [ ^ self openFailed: #'bad argument' ].
 	availability = 1 ifFalse: [ ^ self openFailed: #'unsupported operation' ].

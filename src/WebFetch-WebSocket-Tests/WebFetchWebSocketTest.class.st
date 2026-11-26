@@ -284,20 +284,20 @@ WebFetchWebSocketTest >> testInsufficientMemoryTwiceDropsTheMessage [
 WebFetchWebSocketTest >> testLimitsAreCheckedWhenSet [
 	| ws |
 	ws := WebFetchWebSocket url: (self urlOf: '/limits').
-	{ 0. -1. (1 bitShift: 30) + 1. nil. '1' } do: [ :each |
+	{ 0. -1. (1 bitShift: 28) + 1. (1 bitShift: 30). nil. '1' } do: [ :each |
 		self should: [ ws maximumMessageSize: each ] raise: WebFetchBadRequest.
 		self should: [ ws maximumQueuedBytes: each ] raise: WebFetchBadRequest ].
 	self should: [ ws timeout: -1 second ] raise: WebFetchBadRequest.
 	self should: [ ws timeout: 'soon' ] raise: WebFetchBadRequest.
 	ws
-		maximumMessageSize: (1 bitShift: 30);
+		maximumMessageSize: (1 bitShift: 28);
 		maximumQueuedBytes: 1;
 		timeout: Duration zero.
 	self assert: ws timeout equals: nil.
 	ws timeout: 2.5.
 	self assert: ws timeout equals: 2500 milliSeconds.
 	ws start.
-	self assert: (host lastOpen at: #maxMessage) equals: (1 bitShift: 30).
+	self assert: (host lastOpen at: #maxMessage) equals: (1 bitShift: 28).
 	self assert: (host lastOpen at: #maxQueued) equals: 1.
 	self assert: (host lastOpen at: #timeout) equals: 2500.
 	self should: [ ws protocols: #( 'late' ) ] raise: WebFetchBadRequest.
