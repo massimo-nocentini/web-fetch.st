@@ -280,14 +280,14 @@ WebFetchEventSourceTest >> testConnectTimeout [
 	| source start |
 	host enqueuePending.
 	source := (self source: 'ct') connectTimeout: 50 milliSeconds; yourself.
-	start := Time millisecondClockValue.
+	start := Time microsecondClockValue.
 	self
 		should: [ source next ]
 		raise: WebFetchTimeout
 		withExceptionDo: [ :error |
 			self assert: error messageText equals: 'no head after 50 ms'.
 			self assert: error kind equals: #timeout ].
-	self assert: Time millisecondClockValue - start >= 45.
+	self assert: Time microsecondClockValue - start >= 45000.
 	self assert: source isClosed.
 	self assert: host openCount equals: 0.
 	"after an open, a reconnection"
@@ -552,9 +552,9 @@ WebFetchEventSourceTest >> testNextTimeout [
 	source := self source: 'nt'.
 	self assert: (source nextTimeout: 50 milliSeconds) isNil.
 	self deliverHead.
-	start := Time millisecondClockValue.
+	start := Time microsecondClockValue.
 	self assert: (source nextTimeout: 50 milliSeconds) isNil.
-	self assert: Time millisecondClockValue - start >= 45.
+	self assert: Time microsecondClockValue - start >= 45000.
 	self assert: source isOpen.
 	self deny: source isClosed.
 	self push: (self text: #( 'data: x' '' )).

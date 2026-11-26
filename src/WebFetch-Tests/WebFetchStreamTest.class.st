@@ -175,9 +175,9 @@ WebFetchStreamTest >> testWaitTimeout [
 	stream := self openStream: 'wt'.
 	id := host lastId.
 	[
-		start := Time millisecondClockValue.
+		start := Time microsecondClockValue.
 		self deny: (stream waitTimeout: 50 milliSeconds).
-		self assert: Time millisecondClockValue - start >= 45.
+		self assert: Time microsecondClockValue - start >= 45000.
 		self deny: (stream waitTimeout: 0 seconds).
 		self deny: (stream waitTimeout: 0.02).
 		host pushBytes: 'ab' utf8Encoded for: id.
