@@ -82,9 +82,9 @@ WebFetchWebSocketLiveTest >> logFor: aTag [
 
 { #category : 'helpers' }
 WebFetchWebSocketLiveTest >> newTag [
-	"A tag for the URLs of one connection"
+	"A tag for the URLs of one connection: the microseconds of the UTC clock make it new at each run (millisecondClockValue counts from the start of the VM, so two runs on one server met at the same values), and the last hyphen keeps a tag from matching the start of a longer one"
 
-	^ 't' , (tag := tag + 1) printString , '-' , testSelector , '-' , Time millisecondClockValue printString
+	^ 't' , (tag := tag + 1) printString , '-' , testSelector , '-' , Time microsecondClockValue printString , '-'
 ]
 
 { #category : 'helpers' }

@@ -1,6 +1,6 @@
 # web-fetch.st
 
-HTTP and HTTPS for Pharo 12 to 15 on WebAssembly, with the `fetch` of the browser or of node, Server-Sent Events over it, and an adapter for Zinc.
+HTTP and HTTPS for Pharo 12 to 15 on WebAssembly, with the `fetch` of the browser or of node, Server-Sent Events over it, WebSocket client connections with the `WebSocket` of the host, and an adapter for Zinc.
 
 The work is done by the WebFetchPlugin of the VM of [massimo-nocentini/pharo-vm](https://github.com/massimo-nocentini/pharo-vm) (its `docs/WebFetch.md` is the contract); the package waits as Smalltalk code does, on a semaphore, while the VM and the other processes go on.
 
@@ -440,7 +440,7 @@ WEB_FETCH_SERVER=http://127.0.0.1:<port> WEB_FETCH_HANG_PORT=<hang port> \
 /path/to/pharo-vm/build-wasm/node/pharo --headless Pharo.image --no-default-preferences st --quit tests/run-websocket.st
 ```
 
-or from a `websocket.lane` file of the working directory, whose two first words are what the server prints. `WebFetchWebSocketEchoServerTest` goes to `wss://echo.websocket.org` only with `WEB_FETCH_ECHO_SERVER` set, as `WebFetchEchoServerTest`. `tests/callback-websocket.st` waits in a real FFI callback, and `tests/snapshot-websocket.st`, run twice, saves an image while processes wait on sockets and restarts it.
+or from a `websocket.lane` file of the working directory, whose two first words are what the server prints. `WebFetchWebSocketEchoServerTest` goes to `wss://echo.websocket.org` only with `WEB_FETCH_ECHO_SERVER` set, as `WebFetchEchoServerTest`. `tests/callback-websocket.st` waits in a real FFI callback, and `tests/snapshot-websocket.st`, run twice, saves an image while processes wait on sockets and restarts it. Like the event sources, these tests need what a VM of an older checkout lacks: the WebSocketPlugin, and the WebSocket endpoints of `fetch-http.mjs`; so the VM lands first here too.
 
 In the VM repository, lane 81 runs all of these, and lane 84 those of the WebSockets, in the node VM and in the web VM, when `WEB_FETCH_DIR` names a checkout of this repository; `websocket.spec.mjs` runs them in Chromium too:
 
