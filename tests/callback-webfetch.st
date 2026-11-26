@@ -1,4 +1,4 @@
-"callback-webfetch.st - requests while a real FFI callback runs
+"callback-webfetch.st - requests and event sources while a real FFI callback runs
 
 	WEB_FETCH_SERVER=http://127.0.0.1:<port> pharo --headless X.image --no-default-preferences st --quit callback-webfetch.st
 
@@ -37,6 +37,25 @@ inCallback value: [ read := got value: [ fetch get: base , '/hello' ] ].
 check value: 'get: in the callback' value: read value: 'WebFetchInCallback'.
 inCallback value: [ read := got value: [ (fetch request: base , '/hello') start response ] ].
 check value: 'response in the callback' value: read value: 'WebFetchInCallback'.
+fetch abortAll.
+
+"an event source: next of a new one signals before it makes a request; start works, its events come
+ after the callback (two events, then the 204 of the server)"
+inCallback value: [
+	read := (got value: [ (fetch eventSource: base , '/sse?key=callback-next&end=hang') next ])
+		, ', open ' , (Smalltalk globals at: #WebFetchCall) openCount printString ].
+check value: 'next of an event source in the callback' value: read value: 'WebFetchInCallback, open 0'.
+done := Semaphore new.
+read := OrderedCollection new.
+inCallback value: [
+	((fetch eventSource: base , '/sse?key=callback-start&n=2&until=2&retry=50')
+		onEvent: [ :event | read add: event lastEventId ];
+		onError: [ :error |
+			read add: error class name asString.
+			done signal ];
+		yourself) start ].
+done waitTimeoutSeconds: 5.
+check value: 'start of an event source in the callback' value: read asArray value: #( '1' '2' 'WebFetchBadResponse' ).
 fetch abortAll.
 
 "whenDone: in a callback that lets its process run, and in one that does not"

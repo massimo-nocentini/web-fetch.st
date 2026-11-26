@@ -1,4 +1,4 @@
-"snapshot-webfetch.st - an image saved while processes wait for requests, then restarted
+"snapshot-webfetch.st - an image saved while processes wait for requests and an event source, then restarted
 
 	pharo --headless X.image --no-default-preferences st snapshot-webfetch.st     (twice, on one copy)
 
@@ -18,7 +18,7 @@ environment := OSEnvironment current.
 base := environment at: 'WEB_FETCH_SERVER' ifAbsent: [ 'webfetch.lane' asFileReference contents substrings first ].
 fetch := Smalltalk globals at: #WebFetch.
 call := Smalltalk globals at: #WebFetchCall.
-names := #( response get wait waitTimeout stream whenDone ).
+names := #( response get wait waitTimeout stream whenDone eventSource ).
 (Smalltalk globals at: #WebFetchSnapshot ifAbsent: [ nil ])
 	ifNil: [
 		| slow session |
@@ -31,6 +31,7 @@ names := #( response get wait waitTimeout stream whenDone ).
 		wait value: #wait value: [ (fetch request: base , '/hang?snap3') start wait ].
 		wait value: #waitTimeout value: [ (fetch request: base , '/hang?snap4') start waitTimeout: 100 seconds ].
 		wait value: #stream value: [ (fetch request: base , '/endless?snap5') stream: [ :stream | [ stream next: 1000 ] repeat ] ].
+		wait value: #eventSource value: [ (fetch eventSource: base , '/sse?key=snap7&end=hang') do: [ :event | ] ].
 		(fetch request: base , '/hang?snap6') start
 			whenDone: [ :response | results at: #whenDone put: 'nothing' ]
 			ifError: [ :error | results at: #whenDone put: error class name asString ].
