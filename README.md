@@ -150,6 +150,51 @@ TaskIt `future` works without extra glue on Pharo 12 to 15:
 
 `WebFetchBodyStream` also understands `atEnd`, `readInto:startingAt:count:`, `do:`, `isBinary`, `isStream` and `close`. Closing before EOF aborts the request and subsequent reads signal `WebFetchAborted`; closing after EOF leaves `next` answering `nil`.
 
+### Example: the echo server of websocket.org
+
+The [echo server of websocket.org](https://websocket.org/tools/websocket-echo-server/) is a public server for tests. Two of its endpoints are plain HTTP, which WebFetch uses.
+
+`https://echo.websocket.org/.sse` sends Server-Sent Events without end: an event `server`, an event `request` (the request as the server got it), then an event `time` every second. It answers every origin, so this works in the pages and in node. `stream:` reads the first lines and closes the stream, which ends the request:
+
+```smalltalk
+(WebFetch request: 'https://echo.websocket.org/.sse')
+	timeout: 30 seconds;
+	stream: [ :stream |
+		| lines line byte |
+		lines := OrderedCollection new.
+		line := WriteStream on: ByteArray new.
+		[ (lines count: [ :each | each beginsWith: 'event: time' ]) < 3
+			and: [ (byte := stream next) notNil ] ] whileTrue: [
+				byte = 10
+					ifTrue: [
+						lines add: line contents utf8Decoded.
+						line := WriteStream on: ByteArray new ]
+					ifFalse: [ line nextPut: byte ] ].
+		lines ]
+"=> an OrderedCollection('event: server' 'data: 4d896d95b55478' 'id: 1' '' 'event: request' 'data: GET /.sse HTTP/1.1' ... 'event: time' 'data: 2026-11-26T08:23:27Z' ...)"
+```
+
+Any other path is an HTTP echo. Its `text/plain` answer shows the request: its line, its headers (with the address of the client, as the server sees it) and its body. It sends no CORS header, so a browser refuses its answer to the pages (`WebFetchNetworkError`); the node VM reads it:
+
+```smalltalk
+(WebFetch post: 'https://echo.websocket.org/webfetch' body: '{"greeting":"ciao"}' type: 'application/json') contents
+"=> 'Request served by ...
+
+POST /webfetch HTTP/1.1
+
+Host: echo.websocket.org
+...
+Content-Type: application/json
+...
+
+{""greeting"":""ciao""}
+...'"
+```
+
+Its third endpoint, `wss://echo.websocket.org`, is a WebSocket echo, which WebFetch cannot open: it makes HTTP requests only. Nor do the sockets of the WebAssembly VM reach it: Emscripten carries their TCP bytes over WebSockets of its own, for a proxy such as websockify, so a WebSocket client written on `Socket` (such as `ZnWebSocket` of Zinc-WebSocket, which the image does not have) does not work there either.
+
+`WebFetchEchoServerTest` (in `WebFetch-Tests`) checks both HTTP endpoints, and how its `nextEventFrom:` parses the events.
+
 ### Errors
 
 All errors inherit from `WebFetchError` and carry a `kind` symbol:
@@ -217,6 +262,8 @@ WEB_FETCH_SERVER=http://127.0.0.1:<port> \
 ```
 
 `tests/run-webfetch.st` also reads the server URL from a `webfetch.lane` file in the working directory when `WEB_FETCH_SERVER` is not set. Without a server URL, or off WebAssembly, live tests skip themselves.
+
+`WebFetchEchoServerTest` goes to the public echo server of websocket.org, so it runs only when asked to. Set `WEB_FETCH_ECHO_SERVER=https://echo.websocket.org` for the node VM, or evaluate `WebFetchEchoServerTest server: 'https://echo.websocket.org'` in the pages. In a browser, its test of the HTTP echo skips, since that answer has no CORS header.
 `tests/callback-webfetch.st` makes requests while a real FFI callback runs (the node VM with the FFI).
 `tests/snapshot-webfetch.st`, run twice on one copy of an image, saves it while processes wait for requests and restarts it.
 
