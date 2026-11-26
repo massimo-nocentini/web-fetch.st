@@ -1,5 +1,5 @@
 "
-I am the root exception of WebFetch. My `kind` is a Symbol naming the wire or local failure kind (`#request`, `#network`, `#timeout`, `#aborted`, `#off`, `#redirect`, `#body`, `#unavailable`, `#tooLarge`, `#tooManyOpen`, `#inCallback`, `#sessionEnded`).
+I am the root exception of WebFetch. My `kind` is a Symbol naming the wire or local failure kind (`#request`, `#network`, `#timeout`, `#aborted`, `#off`, `#redirect`, `#body`, `#unavailable`, `#tooLarge`, `#tooManyOpen`, `#inCallback`, `#sessionEnded`, `#response`).
 "
 Class {
 	#name : 'WebFetchError',
@@ -28,6 +28,7 @@ WebFetchError class >> classForKind: aSymbol [
 	aSymbol == #tooManyOpen ifTrue: [ ^ WebFetchTooManyOpen ].
 	aSymbol == #inCallback ifTrue: [ ^ WebFetchInCallback ].
 	aSymbol == #sessionEnded ifTrue: [ ^ WebFetchSessionEnded ].
+	aSymbol == #response ifTrue: [ ^ WebFetchBadResponse ].
 	^ self
 ]
 

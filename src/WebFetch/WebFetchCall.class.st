@@ -48,7 +48,7 @@ WebFetchCall class >> checkMayWait: aHost [
 	"While an FFI callback runs no event of the host comes: a wait of the callback itself would never end.
 	The wait of another process ends after the callback"
 
-	(aHost mayWait not and: [ self isInCallback ]) ifTrue: [
+	(self mayWaitWith: aHost) ifFalse: [
 		WebFetchInCallback signal: 'Cannot wait on WebFetch inside an FFI callback' ]
 ]
 
@@ -76,6 +76,13 @@ WebFetchCall class >> isInCallback [
 	context := context sender.
 	context isNil ] whileFalse.
 	^ false
+]
+
+{ #category : 'private' }
+WebFetchCall class >> mayWaitWith: aHost [
+	"Answer whether the active process may wait for an event of aHost: false only in an FFI callback"
+
+	^ aHost mayWait or: [ self isInCallback not ]
 ]
 
 { #category : 'accessing' }

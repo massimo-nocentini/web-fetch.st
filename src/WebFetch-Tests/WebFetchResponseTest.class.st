@@ -103,3 +103,23 @@ WebFetchResponseTest >> testParseHeadEdgeCasesAndHeaders [
 		assert: seen asArray
 		equals: { 'X-Dup' -> 'first'. 'X-Empty' -> ''. 'X-Colon' -> 'a: b: c'. 'x-dup' -> 'second' }
 ]
+
+{ #category : 'tests' }
+WebFetchResponseTest >> testMediaTypeAndBadResponse [
+	| head error |
+	head := '200' , String lf , 'OK' , String lf , 'http://x' , String lf , 'basic' , String lf , '0'.
+	self assert: (WebFetchResponse fromHeadBytes: head utf8Encoded) mediaType equals: ''.
+	self
+		assert: (WebFetchResponse fromHeadBytes: (head , String lf , 'Content-Type:  Text/Event-Stream ; charset=UTF-8') utf8Encoded) mediaType
+		equals: 'text/event-stream'.
+	self
+		assert: (WebFetchResponse fromHeadBytes: (head , String lf , 'content-type: TEXT/PLAIN') utf8Encoded) mediaType
+		equals: 'text/plain'.
+	error := WebFetchError kind: #response message: 'status 500'.
+	self assert: error class equals: WebFetchBadResponse.
+	self assert: error kind equals: #response.
+	self assert: error response isNil.
+	self assert: WebFetchBadResponse new kind equals: #response.
+	error response: (WebFetchResponse fromHeadBytes: head utf8Encoded).
+	self assert: error copy response status equals: 200
+]

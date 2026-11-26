@@ -155,3 +155,80 @@ WebFetchStreamTest >> testTerminateReaderAborts [
 		process terminate.
 		self assert: (self waitUntil: [ host openCount = 0 ]) ] ensure: [ call abort ]
 ]
+
+{ #category : 'helpers' }
+WebFetchStreamTest >> openStream: path [
+	"Answer a WebFetchBodyStream whose head came and whose body is pushed by hand"
+
+	| call |
+	host enqueuePending.
+	call := (WebFetch request: 'http://example.test/' , path) startWithWindow: 1000.
+	host deliverHeadFor: host lastId status: 200 reason: 'OK' url: 'http://example.test/' , path type: 'basic' redirected: false headers: #( ).
+	^ WebFetchBodyStream on: call response: call waitForHead
+]
+
+{ #category : 'tests' }
+WebFetchStreamTest >> testWaitTimeout [
+	"false on silence after the time; true at once on bytes, at the end and on a failure, whose read then signals"
+
+	| stream id start |
+	stream := self openStream: 'wt'.
+	id := host lastId.
+	[
+		start := Time millisecondClockValue.
+		self deny: (stream waitTimeout: 50 milliSeconds).
+		self assert: Time millisecondClockValue - start >= 45.
+		self deny: (stream waitTimeout: 0 seconds).
+		self deny: (stream waitTimeout: 0.02).
+		host pushBytes: 'ab' utf8Encoded for: id.
+		start := Time millisecondClockValue.
+		self assert: (stream waitTimeout: 5 seconds).
+		self assert: Time millisecondClockValue - start < 1000.
+		self assert: stream next equals: $a asciiValue.
+		"a byte in the buffer of the stream"
+		self assert: (stream waitTimeout: 0 seconds).
+		self assert: stream next equals: $b asciiValue.
+		[
+			(Delay forMilliseconds: 20) wait.
+			host pushBytes: 'c' utf8Encoded for: id ] fork.
+		self assert: (stream waitTimeout: nil).
+		self assert: stream next equals: $c asciiValue.
+		host finish: id.
+		self assert: (stream waitTimeout: 0 seconds).
+		self assert: stream next isNil.
+		self assert: (stream waitTimeout: 1 second) ] ensure: [ stream close ].
+
+	stream := self openStream: 'wtfail'.
+	id := host lastId.
+	[
+		[
+			(Delay forMilliseconds: 20) wait.
+			host fail: id kind: #body message: 'cut' ] fork.
+		self assert: (stream waitTimeout: 2 seconds).
+		self should: [ stream next ] raise: WebFetchNetworkError ] ensure: [ stream close ].
+	self assert: host openCount equals: 0
+]
+
+{ #category : 'tests' }
+WebFetchStreamTest >> testWaitTimeoutInCallbackAndTerminate [
+	| stream process |
+	stream := self openStream: 'wtcb'.
+	[
+		self inCallback: [
+			self deny: (stream waitTimeout: 0 seconds).
+			self should: [ stream waitTimeout: 50 milliSeconds ] raise: WebFetchInCallback.
+			self should: [ stream waitTimeout: nil ] raise: WebFetchInCallback ].
+		self assert: host openCount equals: 1.
+		host pushBytes: 'x' utf8Encoded for: host lastId.
+		self inCallback: [ self assert: (stream waitTimeout: 0 seconds) ].
+		self assert: stream next equals: $x asciiValue ] ensure: [ stream close ].
+
+	"terminate during the wait aborts the call"
+	stream := self openStream: 'wtterm'.
+	process := [ stream waitTimeout: nil ] fork.
+	(Delay forMilliseconds: 30) wait.
+	self assert: host openCount equals: 1.
+	process terminate.
+	self assert: (self waitUntil: [ host openCount = 0 ]).
+	self assert: host closedCount equals: 2
+]

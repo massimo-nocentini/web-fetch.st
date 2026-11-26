@@ -180,6 +180,13 @@ WebFetchResponse >> isTextualMediaType: mediaType [
 	^ false
 ]
 
+{ #category : 'accessing' }
+WebFetchResponse >> mediaType [
+	"Answer the media type of Content-Type in lowercase, without its parameters (`text/event-stream` of `Text/Event-Stream; charset=utf-8`), or '' without one"
+
+	^ self mediaTypeFromContentType: (self headerAt: 'Content-Type' ifAbsent: [ '' ])
+]
+
 { #category : 'private' }
 WebFetchResponse >> mediaTypeFromContentType: contentType [
 	| semi |

@@ -84,6 +84,17 @@ WebFetchBodyStream >> isBinary [
 ]
 
 { #category : 'testing' }
+WebFetchBodyStream >> isReadReady [
+	"Answer whether a read would not wait: bytes in my buffer or in the host, the end, a failure or a close (which the read then signals)"
+
+	position <= limit ifTrue: [ ^ true ].
+	(atEnd or: [ closed ]) ifTrue: [ ^ true ].
+	^ call refreshState >= 3
+		or: [ call recordedAvailableBytes > 0
+		or: [ call recordedState = 0 ] ]
+]
+
+{ #category : 'testing' }
 WebFetchBodyStream >> isStream [
 	^ true
 ]
@@ -171,17 +182,12 @@ WebFetchBodyStream >> upToEnd [
 
 { #category : 'private' }
 WebFetchBodyStream >> waitAndReadInto: aByteArray startingAt: startIndex count: count [
-	| ready |
-	ready := [
-		call refreshState >= 3
-			or: [ call recordedAvailableBytes > 0
-			or: [ call recordedState = 0 ] ] ].
 	[
 		| s |
-		ready value ifFalse: [
+		self isReadReady ifFalse: [
 			"refused in a callback, the call is not aborted"
 			call checkMayWait.
-			[ call waitUntil: ready timeout: nil ] ifCurtailed: [ call abort ] ].
+			[ call waitUntil: [ self isReadReady ] timeout: nil ] ifCurtailed: [ call abort ] ].
 		s := call recordedState.
 		(s = 4 or: [ s = 0 ]) ifTrue: [ call signalErrorOfEnded ].
 		call recordedAvailableBytes > 0 ifTrue: [
@@ -192,4 +198,19 @@ WebFetchBodyStream >> waitAndReadInto: aByteArray startingAt: startIndex count: 
 			atEnd := true.
 			call finishStream.
 			^ 0 ] ] repeat
+]
+
+{ #category : 'waiting' }
+WebFetchBodyStream >> waitTimeout: aDurationOrSecondsOrNil [
+	"Wait until a read would not wait (isReadReady) and answer true, or answer false when the time passed. Zero only tests, without waiting, also in an FFI callback; nil waits without end. Elsewhere in a callback signal WebFetchInCallback, the call left open; curtailed, abort the call"
+
+	| ms |
+	self isReadReady ifTrue: [ ^ true ].
+	ms := aDurationOrSecondsOrNil ifNotNil: [ :time |
+		time isNumber
+			ifTrue: [ (time * 1000) truncated ]
+			ifFalse: [ time asMilliSeconds truncated ] ].
+	(ms notNil and: [ ms <= 0 ]) ifTrue: [ ^ false ].
+	call checkMayWait.
+	^ [ call waitUntil: [ self isReadReady ] timeout: ms ] ifCurtailed: [ call abort ]
 ]

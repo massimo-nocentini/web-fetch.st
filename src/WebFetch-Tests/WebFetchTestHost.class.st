@@ -11,6 +11,7 @@ Class {
 		'availability',
 		'mayWait',
 		'maxOpen',
+		'maximumFlags',
 		'autoDeliver',
 		'nextId',
 		'open',
@@ -285,6 +286,18 @@ WebFetchTestHost >> maxOpen: anInteger [
 	maxOpen := anInteger
 ]
 
+{ #category : 'accessing' }
+WebFetchTestHost >> maximumFlags [
+	^ maximumFlags
+]
+
+{ #category : 'accessing' }
+WebFetchTestHost >> maximumFlags: anInteger [
+	"The largest flags of a start, 3 by default; 1 makes me a VM before flag 2 (the cache mode no-store), which refuses it as WebFetchHost>>startFailed: reports #'bad argument'"
+
+	maximumFlags := anInteger
+]
+
 { #category : 'host protocol' }
 WebFetchTestHost >> mayWait [
 	^ mayWait
@@ -464,6 +477,7 @@ WebFetchTestHost >> reset [
 		availability := 1.
 		mayWait := true.
 		maxOpen := 64.
+		maximumFlags := 3.
 		autoDeliver := true.
 		nextId := 1.
 		open := Dictionary new.
@@ -508,7 +522,7 @@ WebFetchTestHost >> startSemaphore: semIndex head: headBytes body: bodyBytesOrNi
 		WebFetchBadRequest signal: 'Invalid window size' ].
 	(timeoutMs isInteger and: [ timeoutMs between: 0 and: 2147483647 ]) ifFalse: [
 		WebFetchBadRequest signal: 'Invalid timeout' ].
-	(flags = 0 or: [ flags = 1 ]) ifFalse: [
+	(flags isInteger and: [ flags between: 0 and: maximumFlags ]) ifFalse: [
 		WebFetchBadRequest signal: 'Invalid flags' ].
 	parsed := self parseHeadBytes: headBytes.
 	script := nil.

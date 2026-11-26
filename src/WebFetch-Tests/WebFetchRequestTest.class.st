@@ -194,3 +194,47 @@ WebFetchRequestTest >> testValidationRefusalsRegisterNothing [
 	self assert: self registeredSemaphoreCount equals: before.
 	self assert: WebFetchCall openCount equals: 0
 ]
+
+{ #category : 'tests' }
+WebFetchRequestTest >> testCopyRemoveHeaderAndNoStore [
+	| req copy |
+	req := (WebFetch request: 'http://example.test/c')
+		headerAt: 'X-A' put: '1';
+		yourself.
+	copy := req copy.
+	copy headerAt: 'X-B' put: '2'.
+	self assert: (req headers collect: [ :each | each key ]) asArray equals: #( 'X-A' ).
+	self assert: (copy headers collect: [ :each | each key ]) asArray equals: #( 'X-A' 'X-B' ).
+	copy headerAt: 'x-a' put: '3'.
+	self assert: (req headers detect: [ :each | each key = 'X-A' ]) value equals: '1'.
+
+	req
+		headerAt: 'Last-Event-ID' put: '1';
+		headerAt: 'X-C' put: '2'.
+	req headers add: 'last-event-id' -> '2'.
+	req removeHeaderNamed: 'LAST-EVENT-ID'.
+	self assert: (req headers collect: [ :each | each key ]) asArray equals: #( 'X-A' 'X-C' ).
+	req removeHeaderNamed: 'X-None'.
+	self assert: req headers size equals: 2.
+
+	self deny: req isNoStore.
+	self assert: ((req copy noStore: true; yourself) buildForDefaultTimeout: nil) fourth equals: 2.
+	self deny: req isNoStore.
+	self assert: ((req copy noStore: true; dontFollowRedirects; yourself) buildForDefaultTimeout: nil) fourth equals: 3.
+	self assert: (req buildForDefaultTimeout: nil) fourth equals: 0.
+
+	host enqueueStatus: 200 headers: #() body: 'ok'.
+	(req copy noStore: true; yourself) fetch.
+	self assert: (host lastRequest at: #flags) equals: 2.
+	"a VM before flag 2 refuses it"
+	host maximumFlags: 1.
+	self should: [ (req copy noStore: true; yourself) fetch ] raise: WebFetchBadRequest.
+	self assert: host requests size equals: 1.
+	self assert: WebFetchCall openCount equals: 0.
+	host enqueueStatus: 200 headers: #() body: 'ok'.
+	(req copy dontFollowRedirects; yourself) fetch.
+	self assert: (host lastRequest at: #flags) equals: 1.
+	host reset.
+	self assert: host maximumFlags equals: 3.
+	self should: [ host startSemaphore: 1 head: #[ 1 ] body: nil window: 1 timeout: 0 flags: 4 ] raise: WebFetchBadRequest
+]

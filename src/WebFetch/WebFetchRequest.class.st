@@ -14,7 +14,8 @@ Class {
 		'timeout',
 		'timeoutSet',
 		'maximumBodySize',
-		'followRedirects'
+		'followRedirects',
+		'noStore'
 	],
 	#category : 'WebFetch-Core',
 	#package : 'WebFetch',
@@ -106,6 +107,7 @@ WebFetchRequest >> buildForDefaultTimeout: defaultDuration [
 	(headBytes isEmpty or: [ headBytes size > self class maxHeadBytes ]) ifTrue: [
 		WebFetchBadRequest signal: 'Request head exceeds 1 MiB limit' ].
 	flags := followRedirects ifTrue: [ 0 ] ifFalse: [ 1 ].
+	noStore ifTrue: [ flags := flags + 2 ].
 	^ { headBytes. bodyBytes. timeoutMs. flags }
 ]
 
@@ -155,12 +157,18 @@ WebFetchRequest >> initialize [
 	headers := OrderedCollection new.
 	timeoutSet := false.
 	maximumBodySize := self class defaultMaximumBodySize.
-	followRedirects := true
+	followRedirects := true.
+	noStore := false
 ]
 
 { #category : 'testing' }
 WebFetchRequest >> isFollowRedirects [
 	^ followRedirects
+]
+
+{ #category : 'private' }
+WebFetchRequest >> isNoStore [
+	^ noStore
 ]
 
 { #category : 'accessing' }
@@ -191,6 +199,30 @@ WebFetchRequest >> method [
 { #category : 'accessing' }
 WebFetchRequest >> method: aSymbolOrString [
 	method := aSymbolOrString
+]
+
+{ #category : 'private' }
+WebFetchRequest >> noStore: aBoolean [
+	"Ask fetch for the cache mode no-store (flag 2 of the host), as an event source does. A VM before that flag refuses the start with WebFetchBadRequest"
+
+	noStore := aBoolean
+]
+
+{ #category : 'copying' }
+WebFetchRequest >> postCopy [
+	"A copy has headers of its own"
+
+	super postCopy.
+	headers := headers copy
+]
+
+{ #category : 'accessing' }
+WebFetchRequest >> removeHeaderNamed: aName [
+	"Remove every header named aName, case-insensitively"
+
+	| lower |
+	lower := aName asLowercase.
+	headers := headers reject: [ :assoc | assoc key asLowercase = lower ]
 ]
 
 { #category : 'executing' }
