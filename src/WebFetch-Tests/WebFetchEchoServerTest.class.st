@@ -4,7 +4,7 @@ I test `WebFetch` against a public echo server, the one of https://websocket.org
 That server has three faces:
 
 - `wss://echo.websocket.org`, a WebSocket echo, which `WebFetch` does not speak (it makes HTTP requests);
-- `https://echo.websocket.org/.sse`, Server-Sent Events: an event `server`, an event `request`, then an event `time` every second, without end; it answers every origin (`Access-Control-Allow-Origin: *`);
+- `https://echo.websocket.org/.sse`, Server-Sent Events: an event `server`, an event `request`, then an event `time` every second, without end, numbered from 1 by their `id`; it answers every origin (`Access-Control-Allow-Origin: *`). I read it with `WebFetchEventSource`;
 - any other path, an HTTP echo, whose `text/plain` answer shows the request: its line, its headers and its body; it sends no CORS header, so a browser refuses its answer to the pages, and only the node VM reads it.
 
 In the pages, `WebFetchEchoServerTest server: 'https://echo.websocket.org'` turns me on.
@@ -44,33 +44,6 @@ WebFetchEchoServerTest >> baseUrl [
 	^ self class server ifNil: [ self skip: 'WEB_FETCH_ECHO_SERVER is not set' ]
 ]
 
-{ #category : 'helpers' }
-WebFetchEchoServerTest >> nextEventFrom: aStream [
-	"Answer the next event of aStream, an event stream, as an Association of its name (or 'message') and its data lines joined by line feeds, or nil at its end. An event ends with an empty line; comments (lines that begin with a colon) and ids are left out."
-
-	| name data line |
-	data := OrderedCollection new.
-	[
-		line := self nextLineFrom: aStream.
-		line isNil or: [ line isEmpty and: [ name notNil or: [ data notEmpty ] ] ] ] whileFalse: [
-			(line beginsWith: 'event:') ifTrue: [ name := (line allButFirst: 6) trimLeft ].
-			(line beginsWith: 'data:') ifTrue: [
-				data add: ((line allButFirst: 5) withoutPrefix: ' ') ] ].
-	(line isNil and: [ name isNil and: [ data isEmpty ] ]) ifTrue: [ ^ nil ].
-	^ (name ifNil: [ 'message' ]) -> (String lf join: data)
-]
-
-{ #category : 'helpers' }
-WebFetchEchoServerTest >> nextLineFrom: aStream [
-	"Answer the next line of aStream, a binary stream of UTF-8, without its end (LF or CR LF), or nil at the end of aStream."
-
-	| bytes byte |
-	bytes := WriteStream on: (ByteArray new: 80).
-	[ (byte := aStream next) isNil or: [ byte = 10 ] ] whileFalse: [ bytes nextPut: byte ].
-	(byte isNil and: [ bytes position = 0 ]) ifTrue: [ ^ nil ].
-	^ (bytes contents utf8Decoded) withoutSuffix: String cr
-]
-
 { #category : 'running' }
 WebFetchEchoServerTest >> tearDown [
 	WebFetch isAvailable ifTrue: [ WebFetch abortAll ].
@@ -79,32 +52,37 @@ WebFetchEchoServerTest >> tearDown [
 
 { #category : 'tests' }
 WebFetchEchoServerTest >> testEventStreamSendsTheTime [
-	"Read the first events of /.sse, then close the stream: the call ends with it."
+	"Read the first events of /.sse with WebFetchEventSource, then close it: the call ends with it."
 
-	| base events response |
+	| base source events event times |
 	base := self baseUrl.
+	source := WebFetch eventSource: base , '/.sse'.
 	events := OrderedCollection new.
-	(WebFetch request: base , '/.sse')
-		headerAt: 'Accept' put: 'text/event-stream';
-		timeout: 30 seconds;
-		stream: [ :stream |
-			| event |
-			response := stream response.
-			[
-				event := self nextEventFrom: stream.
-				event notNil and: [ events add: event. (events count: [ :each | each key = 'time' ]) < 3 ] ]
-					whileTrue ].
-	self assert: response status equals: 200.
-	self assert: ((response headerAt: 'Content-Type' ifAbsent: [ '' ]) beginsWith: 'text/event-stream').
-	self assert: events first key equals: 'server'.
+	[
+		[ (events count: [ :each | each type = 'time' ]) < 3 ] whileTrue: [
+			event := source nextTimeout: 10 seconds.
+			self assert: event notNil.
+			events add: event ] ]
+		ensure: [ source close ].
+	self assert: source response status equals: 200.
+	self assert: source response mediaType equals: 'text/event-stream'.
+	self assert: events first type equals: 'server'.
 	self assert: (events anySatisfy: [ :each |
-		each key = 'request' and: [ each value beginsWith: 'GET /.sse HTTP/' ] ]).
-	(events select: [ :each | each key = 'time' ]) do: [ :each |
+		each type = 'request' and: [ each data beginsWith: 'GET /.sse HTTP/' ] ]).
+	times := events select: [ :each | each type = 'time' ].
+	self assert: times size equals: 3.
+	times do: [ :each |
 		"2026-11-26T08:15:10Z"
-		self assert: each value size equals: 20.
-		self assert: (each value at: 11) equals: $T.
-		self assert: each value last equals: $Z ].
-	self assert: (events count: [ :each | each key = 'time' ]) equals: 3.
+		self assert: each data size equals: 20.
+		self assert: (each data at: 11) equals: $T.
+		self assert: each data last equals: $Z ].
+	"the server numbers its events from 1 with id:"
+	self
+		assert: (events collect: [ :each | each lastEventId ]) asArray
+		equals: ((1 to: events size) collect: [ :i | i printString ]) asArray.
+	self assert: source lastEventId equals: events last lastEventId.
+	self assert: events first origin equals: base.
+	self assert: source readyState equals: #closed.
 	self assert: WebFetchCall openCount equals: 0
 ]
 

@@ -1,5 +1,9 @@
 "
 I test `WebFetch` against a live local HTTP server (`tests/wasm/lib/fetch-http.mjs`) when `WebFetch isAvailable` and `self class server` (defaulting to `WEB_FETCH_SERVER` in the environment) is set.
+
+The server logs every request it gets, with its method, URL and headers, and whether the client closed it before its end; `fetchStatsForTag:` reads the entries whose URL has a tag, `getsForTag:` and `preflightsForTag:` the GETs and the OPTIONS among them. `tagFor:` makes a tag that no other test, nor an earlier run, has.
+
+A subclass, such as `WebFetchEventSourceLiveTest`, shares the server, `isBrowser` and the helpers, and runs only its own tests: `shouldInheritSelectors` is false for a subclass of a concrete class that has tests of its own.
 "
 Class {
 	#name : 'WebFetchLiveTest',
@@ -65,6 +69,20 @@ WebFetchLiveTest >> fetchStatsForTag: tag [
 ]
 
 { #category : 'helpers' }
+WebFetchLiveTest >> getsForTag: tag [
+	"The entries of the log of the server for the GETs whose URL has tag"
+
+	^ ((self fetchStatsForTag: tag) at: 'requests') select: [ :each | (each at: 'method') = 'GET' ]
+]
+
+{ #category : 'helpers' }
+WebFetchLiveTest >> preflightsForTag: tag [
+	"The entries of the log of the server for the OPTIONS (the preflights of a browser) whose URL has tag"
+
+	^ ((self fetchStatsForTag: tag) at: 'requests') select: [ :each | (each at: 'method') = 'OPTIONS' ]
+]
+
+{ #category : 'helpers' }
 WebFetchLiveTest >> registeredSemaphoreCount [
 	| table count |
 	table := Smalltalk specialObjectsArray at: 39.
@@ -79,6 +97,13 @@ WebFetchLiveTest >> seenCountForTag: tag [
 	stats := self fetchStatsForTag: tag.
 	^ ((stats at: 'requests') select: [ :each |
 		(each at: 'url') includesSubstring: tag ]) size
+]
+
+{ #category : 'helpers' }
+WebFetchLiveTest >> tagFor: aString [
+	"A tag for the log of the server: the time makes it new at each run, and the last hyphen keeps k1 from matching k10"
+
+	^ 'sse-' , aString , '-' , Time millisecondClockValue printString , '-'
 ]
 
 { #category : 'helpers' }
