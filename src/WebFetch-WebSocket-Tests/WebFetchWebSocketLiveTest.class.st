@@ -92,6 +92,14 @@ WebFetchWebSocketLiveTest >> pattern: size [
 	^ (ByteArray new: size) collectWithIndex: [ :each :i | (i - 1) bitAnd: 255 ]
 ]
 
+{ #category : 'helpers' }
+WebFetchWebSocketLiveTest >> serverHost [
+	"The host of the server's URL: in a browser it is not the site's own (a page served from
+	 127.0.0.1 reaches the server as localhost), which the host refuses"
+
+	^ self httpBase asUrl host
+]
+
 { #category : 'running' }
 WebFetchWebSocketLiveTest >> setUp [
 	super setUp.
@@ -262,7 +270,7 @@ WebFetchWebSocketLiveTest >> testHungHandshakeTimesOut [
 	started := Time millisecondClockValue.
 	self
 		should: [
-			(WebFetchWebSocket url: 'ws://127.0.0.1:' , port printString , '/ws/hang?t=' , self newTag)
+			(WebFetchWebSocket url: 'ws://' , self serverHost , ':' , port printString , '/ws/hang?t=' , self newTag)
 				timeout: 500 milliSeconds;
 				connect ]
 		raise: WebFetchTimeout.
@@ -310,7 +318,7 @@ WebFetchWebSocketLiveTest >> testPushOfAHundredInOrder [
 { #category : 'tests' }
 WebFetchWebSocketLiveTest >> testRefusedHandshakesAreNetworkErrors [
 	self should: [ self connect: '/ws/refuse?status=403&t=' , self newTag ] raise: WebFetchNetworkError.
-	self should: [ WebFetchWebSocket connect: 'ws://127.0.0.1:1/nobody' ] raise: WebFetchNetworkError.
+	self should: [ WebFetchWebSocket connect: 'ws://' , self serverHost , ':1/nobody' ] raise: WebFetchNetworkError.
 	self assert: WebFetchWebSocket openCount equals: 0
 ]
 
