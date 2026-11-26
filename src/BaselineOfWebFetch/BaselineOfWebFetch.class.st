@@ -7,6 +7,7 @@ Groups:
 - `Tests`: `WebFetch-Tests` (unit tests with `WebFetchTestHost`, native and live tests);
 - `Zinc`: `WebFetch-Zinc` (optional `ZnNetworkingUtils` adapter);
 - `ZincTests`: `WebFetch-Zinc-Tests`;
+- `WebSocket`: `WebFetch-WebSocket` (WebSocket client connections, by `WebSocketPlugin`);
 - `default`: `Core` and `Tests`.
 "
 Class {
@@ -24,11 +25,13 @@ BaselineOfWebFetch >> baseline: spec [
 			package: 'WebFetch';
 			package: 'WebFetch-Tests' with: [ spec requires: #( 'WebFetch' ) ];
 			package: 'WebFetch-Zinc' with: [ spec requires: #( 'WebFetch' ) ];
-			package: 'WebFetch-Zinc-Tests' with: [ spec requires: #( 'WebFetch-Zinc' 'WebFetch-Tests' ) ].
+			package: 'WebFetch-Zinc-Tests' with: [ spec requires: #( 'WebFetch-Zinc' 'WebFetch-Tests' ) ];
+			package: 'WebFetch-WebSocket' with: [ spec requires: #( 'WebFetch' ) ].
 		spec
 			group: 'Core' with: #( 'WebFetch' );
 			group: 'Tests' with: #( 'WebFetch-Tests' );
 			group: 'Zinc' with: #( 'WebFetch-Zinc' );
 			group: 'ZincTests' with: #( 'WebFetch-Zinc-Tests' );
+			group: 'WebSocket' with: #( 'WebFetch-WebSocket' );
 			group: 'default' with: #( 'Core' 'Tests' ) ]
 ]
