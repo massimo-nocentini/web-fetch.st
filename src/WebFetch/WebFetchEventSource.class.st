@@ -9,7 +9,7 @@ Each connection is one streaming call (1 MiB window), with `Accept: text/event-s
 
 `next` answers the next event, waiting through reconnections, or nil once I am closed (by `close`, or a clean end without reconnection), and signals my terminal error; `nextTimeout:` answers nil when the time passes; `do:` reads them all and closes me. One process reads; `close` comes from any process. A wait that is curtailed (Stop, `terminate`, an unwinding) closes me and aborts my request. `lastEventId` is the id of the last event delivered: a new source given it resumes where the code stopped.
 
-`start` forks a reader instead, for tools and the UI: a process at the priority of the caller that gives each connection opened to `onOpen:`, each event to `onEvent:`, each interruption to `onReconnect:` (nil at the end of a body, else the transient error) and the terminal error to `onError:`, then ends; terminating it closes me. The blocks run in that process, not deferred to the UI: a slow block slows the reading, and a block that updates a morph defers to the UI itself (`UIManager default defer:`). A started source survives Stop of the Console and the Notebook; `openSources` lists the sources from their first connection to their close, and `closeAll` or `WebFetch abortAll` closes them. A source never goes on after the image resumed: it fails with `WebFetchSessionEnded`.
+`start` forks a reader instead, for tools and the UI: a process at the priority of the caller that gives each connection opened to `onOpen:`, each event to `onEvent:`, each interruption to `onReconnect:` (nil at the end of a body, else the transient error) and the terminal error to `onError:`, then ends; terminating it closes me. The blocks run in that process, not deferred to the UI: a slow block slows the reading, and a block that updates a morph defers to the UI itself (`UIManager default defer:`). A started source survives Stop of the Console and the Notebook; `openSources` lists the sources from their first connection to their close, and `closeAll` or `WebFetch abortAll` closes them. A source never goes on after the image resumed: it fails with `WebFetchSessionEnded`, unless it was closed before. A close leaves no error, also when it lands while the reader is ending the source with one.
 
 Settings, set before the first connection: `reconnectDelay:`, `minimumReconnectDelay:`, `maximumReconnectDelay:` (Durations, or Numbers of seconds), `reconnects:`, `retriesFirstConnection:`, `connectTimeout:`, `idleTimeout:`, `maximumEventSize:`, `lastEventId:`.
 "
@@ -219,9 +219,10 @@ WebFetchEventSource >> checkReader [
 
 { #category : 'private' }
 WebFetchEventSource >> checkSession [
-	"A source never goes on in another session"
+	"A source never goes on in another session; one that was closed before keeps its end"
 
-	(session notNil and: [ session ~~ Smalltalk session ]) ifTrue: [ self markSessionEnded ]
+	(session notNil and: [ readyState ~~ #closed and: [ session ~~ Smalltalk session ] ]) ifTrue: [
+		self markSessionEnded ]
 ]
 
 { #category : 'private' }
@@ -428,9 +429,9 @@ WebFetchEventSource >> error [
 
 { #category : 'private' }
 WebFetchEventSource >> failWith: anError [
-	"Close the source with a terminal error, which next signals after the queued events"
+	"Close the source with a terminal error, which next signals after the queued events; after a close of the client, without one"
 
-	error ifNil: [ error := anError ].
+	closedByClient ifFalse: [ error ifNil: [ error := anError ] ].
 	self dropConnection.
 	mutex critical: [ readyState := #closed ].
 	reconnectAt := nil.
@@ -537,8 +538,9 @@ WebFetchEventSource >> loopError: anError [
 
 { #category : 'private' }
 WebFetchEventSource >> markSessionEnded [
-	"The image resumed: the source is ended, without a host call"
+	"The image resumed: the source is ended, without a host call. A closed source keeps its end"
 
+	readyState == #closed ifTrue: [ ^ self ].
 	error ifNil: [
 		error := WebFetchSessionEnded new messageText: 'Smalltalk session ended while the event source was open' ].
 	readyState := #closed.

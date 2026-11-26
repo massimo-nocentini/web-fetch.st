@@ -224,6 +224,58 @@ WebFetchEventSourceTest >> testCloseRacesConnect [
 ]
 
 { #category : 'tests' }
+WebFetchEventSourceTest >> testCloseWhileReadingARefusal [
+	"A close that lands while the reader keeps the body of a refused answer leaves no terminal error"
+
+	| source result done |
+	host enqueuePending.
+	source := self source: 'refused-close'.
+	self assert: (source nextTimeout: 0 seconds) isNil.
+	self deliverHead: 500 type: 'text/plain'.
+	self push: 'partial'.
+	done := false.
+	[
+		result := [ source next ] on: Error do: [ :e | e ].
+		done := true ] fork.
+	(Delay forMilliseconds: 50) wait.
+	self deny: done.
+	source close.
+	self assert: (self waitUntil: [ done ]).
+	self assert: result isNil.
+	self assert: source error isNil.
+	self assert: source isClosed.
+	self assert: source next isNil.
+	self assert: host openCount equals: 0
+]
+
+{ #category : 'tests' }
+WebFetchEventSourceTest >> testClosedSourceInAnotherSession [
+	"A source that ended before the image resumed keeps its end: nil, or its own error"
+
+	| clean closed failed |
+	self eventStream: (self text: #( 'data: a' '' )).
+	clean := (self source: 'session-clean') reconnects: false; yourself.
+	self assert: clean next data equals: 'a'.
+	self assert: clean next isNil.
+	self eventStream: (self text: #( 'data: b' '' )).
+	closed := self source: 'session-closed'.
+	self assert: closed next data equals: 'b'.
+	closed close.
+	host enqueueStatus: 500 headers: { 'Content-Type' -> 'text/plain' } body: 'no'.
+	failed := self source: 'session-failed'.
+	self should: [ failed next ] raise: WebFetchBadResponse.
+	{ clean. closed. failed } do: [ :each | each session: Object new ].
+	self assert: clean next isNil.
+	self assert: clean error isNil.
+	self assert: (closed nextTimeout: 0 seconds) isNil.
+	self assert: closed error isNil.
+	self should: [ failed next ] raise: WebFetchBadResponse.
+	self assert: (failed error isKindOf: WebFetchBadResponse).
+	self assert: WebFetchEventSource openCount equals: 0.
+	self assert: host openCount equals: 0
+]
+
+{ #category : 'tests' }
 WebFetchEventSourceTest >> testConnectTimeout [
 	| source start |
 	host enqueuePending.
