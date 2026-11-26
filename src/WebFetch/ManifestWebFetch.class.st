@@ -7,7 +7,7 @@ In the UI process, blocking messages (`fetch`, `get:`, `post:body:type:`, `strea
 
 ## Tags
 
-- `Core`: `WebFetch` facade, `WebFetchRequest`, `WebFetchCall`, `WebFetchResponse`, `WebFetchBodyStream`, `WebFetchHost`, `WebFetchCloser`.
+- `Core`: `WebFetch` facade, `WebFetchRequest`, `WebFetchCall`, `WebFetchResponse`, `WebFetchBodyStream`, `WebFetchHost`, `WebFetchCloser`, `WebFetchEventParser` (the parser of event streams) and `WebFetchEvent`.
 - `Errors`: `WebFetchError` and its subclasses.
 "
 Class {
