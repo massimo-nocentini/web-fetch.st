@@ -1,7 +1,7 @@
 "
 I describe an HTTP request to be executed by `WebFetch`. I am reusable: starting or fetching me never mutates my state.
 
-Defaults: method `#GET`, `maximumBodySize` 64 MiB (for `fetch` and `start`; it does not bound `stream:`), redirects followed, timeout unset (60 seconds for `fetch`/`get:`/`post:body:type:`, none for `start`/`stream:`).
+Defaults: method `#GET`, `maximumBodySize` 64 MiB (for `fetch` and `start`; it does not bound `stream:` nor `eventSource`), redirects followed, timeout unset (60 seconds for `fetch`/`get:`/`post:body:type:`, none for `start`/`stream:`).
 "
 Class {
 	#name : 'WebFetchRequest',
@@ -114,6 +114,13 @@ WebFetchRequest >> buildForDefaultTimeout: defaultDuration [
 { #category : 'configuration' }
 WebFetchRequest >> dontFollowRedirects [
 	followRedirects := false
+]
+
+{ #category : 'executing' }
+WebFetchRequest >> eventSource [
+	"Answer a WebFetchEventSource of a copy of me, not yet connected"
+
+	^ WebFetchEventSource request: self
 ]
 
 { #category : 'executing' }

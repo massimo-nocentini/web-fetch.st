@@ -6,6 +6,7 @@ Examples:
 - `(WebFetch get: 'https://example.org/') contents`
 - `WebFetch post: url body: '{}' type: 'application/json'`
 - `(WebFetch request: url) headerAt: 'Accept' put: 'application/json'; fetch`
+- `(WebFetch eventSource: url) next`, the next event of a stream of Server-Sent Events
 - `WebFetch abortAll`
 
 In the UI process, `get:` and `post:body:type:` freeze the world until they finish or time out (default 60 seconds). Tools should use `(WebFetch request: url) start` with `whenDone:ifError:` and `UIManager default defer:`.
@@ -34,6 +35,13 @@ WebFetch class >> availability [
 	code = 1 ifTrue: [ ^ #ready ].
 	code = 2 ifTrue: [ ^ #off ].
 	^ #unavailable
+]
+
+{ #category : 'requests' }
+WebFetch class >> eventSource: aUrlOrString [
+	"Answer a WebFetchEventSource of a GET of aUrlOrString, not yet connected"
+
+	^ (self request: aUrlOrString) eventSource
 ]
 
 { #category : 'requests' }
