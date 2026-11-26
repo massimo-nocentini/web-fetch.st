@@ -221,7 +221,7 @@ To each connection the source adds `Accept: text/event-stream`, unless the reque
 | a status other than 200 (the 204 with which a server stops its clients included), or a media type other than `text/event-stream` | `WebFetchBadResponse`; its `response` has the status, the headers and at most 64 KiB of the body |
 | data over `maximumEventSize`, an `id` or an `event` over 4096 bytes | `WebFetchTooLarge` (it does not reconnect: the server would send the same event again) |
 | a transient error when the source does not reconnect, or before its first open | that error |
-| an invalid request, a redirect that a browser does not follow | `WebFetchBadRequest` |
+| an invalid request, a redirect that a browser does not follow; in node, an id with a control character other than a tab, which the fetch of node does not send as `Last-Event-ID` (a browser does) | `WebFetchBadRequest` |
 | the network turned off | `WebFetchNetworkOff` |
 | the image resumed | `WebFetchSessionEnded` |
 | its call aborted by `WebFetchCall abortAll` | `WebFetchAborted` |
@@ -344,7 +344,9 @@ WEB_FETCH_SERVER=http://127.0.0.1:<port> \
 /path/to/pharo-vm/build-wasm/node/pharo --headless Pharo.image --no-default-preferences st --quit tests/run-webfetch.st
 ```
 
-`tests/run-webfetch.st` also reads the server URL from a `webfetch.lane` file in the working directory when `WEB_FETCH_SERVER` is not set. Without a server URL, or off WebAssembly, live tests skip themselves.
+`tests/run-webfetch.st` also reads the server URL from a `webfetch.lane` file in the working directory when `WEB_FETCH_SERVER` is not set. Without a server URL, or off WebAssembly, live tests skip themselves. Each tag of the log of the server has the microseconds of the UTC clock, so that the tests may run again against the same server.
+
+The tests of event sources need a server with `/sse`, and a VM that knows the cache mode no-store (flag 2 of `primitiveFetchStart`): `fetch-http.mjs` and the VM of a checkout that has them. Against an older server `/sse` answers 404, and `WebFetchEventSourceLiveTest`, `tests/callback-webfetch.st` and `tests/snapshot-webfetch.st` fail. Since the CI of the VM runs the tests of the master of this repository, a change here that needs a new server or VM lands after the VM's.
 
 `WebFetchEchoServerTest` goes to the public echo server of websocket.org, so it runs only when asked to. Set `WEB_FETCH_ECHO_SERVER=https://echo.websocket.org` for the node VM, or evaluate `WebFetchEchoServerTest server: 'https://echo.websocket.org'` in the pages. In a browser, its test of the HTTP echo skips, since that answer has no CORS header.
 `tests/callback-webfetch.st` makes requests and reads event sources while a real FFI callback runs (the node VM with the FFI).

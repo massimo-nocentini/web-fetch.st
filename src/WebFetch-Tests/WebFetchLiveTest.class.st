@@ -101,9 +101,9 @@ WebFetchLiveTest >> seenCountForTag: tag [
 
 { #category : 'helpers' }
 WebFetchLiveTest >> tagFor: aString [
-	"A tag for the log of the server: the time makes it new at each run, and the last hyphen keeps k1 from matching k10"
+	"A tag for the log of the server, and the key of the connections of /sse: the microseconds of the UTC clock make it new at each run (millisecondClockValue counts from the start of the VM, so two runs on one server met at the same values), and the last hyphen keeps k1 from matching k10"
 
-	^ 'sse-' , aString , '-' , Time millisecondClockValue printString , '-'
+	^ 'sse-' , aString , '-' , Time microsecondClockValue printString , '-'
 ]
 
 { #category : 'helpers' }
